@@ -1,6 +1,6 @@
-import * as THREE from 'three'
 import * as CANNON from 'cannon-es'
 import { gsap } from 'gsap'
+import * as THREE from 'three'
 
 export default class Raycaster {
     constructor(experience) {
@@ -20,23 +20,24 @@ export default class Raycaster {
     }
 
     setEvents() {
-        window.addEventListener('click', (event) => {
-            this.pointer.x = (event.clientX / window.innerWidth) * 2 - 1
-            this.pointer.y = -(event.clientY / window.innerHeight) * 2 + 1
+        // Event listener de click deshabilitado - no se generan cubos al hacer click
+        // window.addEventListener('click', (event) => {
+        //     this.pointer.x = (event.clientX / window.innerWidth) * 2 - 1
+        //     this.pointer.y = -(event.clientY / window.innerHeight) * 2 + 1
 
-            this.raycaster.setFromCamera(this.pointer, this.camera)
-            const floorMesh = this.experience.world?.floor?.mesh
-            if (!floorMesh) return
+        //     this.raycaster.setFromCamera(this.pointer, this.camera)
+        //     const floorMesh = this.experience.world?.floor?.mesh
+        //     if (!floorMesh) return
 
-            const intersects = this.raycaster.intersectObject(floorMesh)
+        //     const intersects = this.raycaster.intersectObject(floorMesh)
 
 
-            if (intersects.length > 0) {
-                const point = intersects[0].point
-                console.log('🟢 Punto seleccionado:', point)
-                this.placeObject(point)
-            }
-        })
+        //     if (intersects.length > 0) {
+        //         const point = intersects[0].point
+        //         console.log('🟢 Punto seleccionado:', point)
+        //         this.placeObject(point)
+        //     }
+        // })
     }
 
     placeObject(position) {

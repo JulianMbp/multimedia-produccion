@@ -83,8 +83,8 @@ export default class Experience {
         }
       }
     })
-    //Generar obstaculos
-    this._startObstacleWaves()
+    //Generar obstaculos - DESHABILITADO
+    // this._startObstacleWaves()
 
     //Iniciar juego
     this.modal.show({
@@ -291,7 +291,7 @@ export default class Experience {
     console.log('🎮 Juego iniciado')
     this.isThirdPerson = true // ⬅️ asegurar el modo
     this.tracker.start()
-    this._startObstacleWaves()
+    // this._startObstacleWaves() // DESHABILITADO - no se generan cubos automáticamente
     if (this.menu && this.menu.toggleButton && this.menu.toggleButton.style) {
       this.menu.toggleButton.style.display = 'block'
     }

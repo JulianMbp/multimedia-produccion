@@ -35,7 +35,7 @@ export default class World {
 
         // Sistema de quesos
         this.cheeses = []
-        this.maxCheeses = 1 // TEMPORAL: Para pruebas - cambiar a 10 en producción
+        this.maxCheeses = 10
         this.cheesesCollected = 0
         this.cheeseModel = null
         this.cheeseParticles = null
@@ -684,17 +684,15 @@ export default class World {
     async loadMaxCheesesFromBackend(level) {
         try {
             const coinsCount = await getCoinsCountByLevel(level)
-            // TEMPORAL: Para pruebas, usar 1 en lugar del valor del backend
-            // this.maxCheeses = coinsCount
-            this.maxCheeses = 1 // TEMPORAL: Cambiar a coinsCount en producción
-            console.log(`📊 maxCheeses desde backend para nivel ${level}: ${coinsCount} (usando 1 para pruebas)`)
+            this.maxCheeses = coinsCount
+            console.log(`📊 maxCheeses desde backend para nivel ${level}: ${coinsCount}`)
             
             // Actualizar contador si ya existe
             this.updateCheeseCounter()
         } catch (error) {
             console.warn(`⚠️ Error al cargar maxCheeses desde backend para nivel ${level}:`, error)
-            // TEMPORAL: Para pruebas, usar 1
-            this.maxCheeses = 1 // TEMPORAL: Cambiar a 10 en producción
+            // Fallback a valor por defecto
+            this.maxCheeses = 10
         }
     }
     

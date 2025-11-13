@@ -7,13 +7,6 @@ const BACKDOOR_CREDENTIALS = {
   password: 'secret',
 };
 
-// Detectar si estamos en producción
-const isProduction = () => {
-  return import.meta.env.PROD || 
-         window.location.hostname !== 'localhost' && 
-         window.location.hostname !== '127.0.0.1';
-};
-
 // Cache para el estado del backend (evitar múltiples pings)
 let backendAvailableCache = null;
 let backendCheckTime = 0;
@@ -68,23 +61,13 @@ export const isJWTToken = (token) => {
 export const login = async (email, password) => {
   // Verificar si el backend está disponible
   const backendAvailable = await isBackendAvailable();
-  const inProduction = isProduction();
   
-  // Si el backend está disponible O estamos en producción, NO permitir backdoor
-  if (backendAvailable || inProduction) {
-    if (email === BACKDOOR_CREDENTIALS.email && password === BACKDOOR_CREDENTIALS.password) {
-      if (inProduction) {
-        throw new Error('El acceso de backdoor no está permitido en producción. Por favor, usa credenciales válidas.');
-      } else {
-        throw new Error('El backend está disponible. Por favor, usa credenciales válidas del servidor.');
-      }
-    }
-  }
-  
-  // Si son credenciales de backdoor y backend NO está disponible y NO estamos en producción
+  // Si son credenciales de backdoor y backend NO está disponible, usar backdoor
   if (email === BACKDOOR_CREDENTIALS.email && password === BACKDOOR_CREDENTIALS.password) {
+    if (backendAvailable) {
+      throw new Error('El backend está disponible. Por favor, usa credenciales válidas del servidor.');
+    }
     console.warn('⚠️ Usando puerta trasera (backdoor) - Acceso directo sin BD');
-    console.warn('⚠️ Solo permitido cuando el backend NO está disponible y NO estamos en producción');
     const backdoorToken = generateBackdoorToken();
     return {
       token: backdoorToken,

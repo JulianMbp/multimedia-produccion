@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { getToken, isBackendAvailable, isJWTToken, isTokenValid, login, register, removeToken, saveToken } from '../services/authService';
+import { getToken, isBackendAvailable, isTokenValid, login, register, removeToken, saveToken } from '../services/authService';
 
 const AuthContext = createContext(null);
 
@@ -48,22 +48,12 @@ export const AuthProvider = ({ children }) => {
         return;
       }
       
-      // Si el backend está disponible, requerir JWT válido
-      const requireJWT = backendAvailable;
+      // Validar token (permitir tanto JWT como backdoor)
+      const requireJWT = false; // Permitir backdoor siempre
       const isValid = isTokenValid(savedToken, requireJWT);
       
       if (!isValid) {
         console.warn('⚠️ Token inválido o expirado, limpiando...');
-        removeToken();
-        setToken(null);
-        setUser(null);
-        setLoading(false);
-        return;
-      }
-      
-      // Si el backend está disponible y el token no es JWT, rechazarlo
-      if (backendAvailable && !isJWTToken(savedToken)) {
-        console.warn('⚠️ Token de backdoor no permitido cuando backend está disponible');
         removeToken();
         setToken(null);
         setUser(null);
@@ -82,15 +72,10 @@ export const AuthProvider = ({ children }) => {
     const interval = setInterval(() => {
       const savedToken = getToken();
       if (savedToken) {
-        const requireJWT = backendAvailable;
+        const requireJWT = false; // Permitir backdoor siempre
         const isValid = isTokenValid(savedToken, requireJWT);
         if (!isValid) {
           console.warn('⚠️ Token expirado durante la sesión');
-          removeToken();
-          setToken(null);
-          setUser(null);
-        } else if (backendAvailable && !isJWTToken(savedToken)) {
-          console.warn('⚠️ Token de backdoor detectado, cerrando sesión');
           removeToken();
           setToken(null);
           setUser(null);
@@ -150,14 +135,9 @@ export const AuthProvider = ({ children }) => {
     if (!token) {
       return false;
     }
-    const isValid = isTokenValid(token, backendAvailable);
-    
-    // Si el backend está disponible, también verificar que sea JWT
-    if (backendAvailable && isValid) {
-      return isJWTToken(token);
-    }
-    return isValid;
-  }, [token, backendAvailable]);
+    // Permitir tanto JWT como backdoor
+    return isTokenValid(token, false);
+  }, [token]);
 
   const value = {
     user,

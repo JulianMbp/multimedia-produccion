@@ -129,6 +129,49 @@ export const login = async (email, password) => {
 };
 
 /**
+ * Registra un nuevo usuario
+ * @param {string} email 
+ * @param {string} password 
+ * @param {string} name - Nombre del usuario (opcional)
+ * @returns {Promise<{token: string, user: object}>}
+ */
+export const register = async (email, password, name = '') => {
+  // Verificar si el backend está disponible
+  const backendAvailable = await isBackendAvailable();
+  
+  if (!backendAvailable) {
+    throw new Error('El backend no está disponible. No se puede registrar un nuevo usuario sin conexión al servidor.');
+  }
+
+  try {
+    const response = await fetch(API_ENDPOINTS.auth.register, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, password, name }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      // Manejar errores de validación del backend
+      if (errorData.errors && Array.isArray(errorData.errors)) {
+        const errorMessages = errorData.errors.map(err => err.msg || err.message).join(', ');
+        throw new Error(errorMessages);
+      }
+      throw new Error(errorData.message || 'Error al registrar usuario');
+    }
+
+    const data = await response.json();
+    console.log('✅ Registro exitoso, token JWT recibido');
+    return data;
+  } catch (error) {
+    console.error('❌ Error en registro:', error);
+    throw error;
+  }
+};
+
+/**
  * Guarda el token en localStorage
  */
 export const saveToken = (token) => {

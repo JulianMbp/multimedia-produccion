@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { isTokenValid, login, removeToken, saveToken, getToken, isBackendAvailable, isJWTToken } from '../services/authService';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { getToken, isBackendAvailable, isJWTToken, isTokenValid, login, register, removeToken, saveToken } from '../services/authService';
 
 const AuthContext = createContext(null);
 
@@ -104,9 +104,12 @@ export const AuthProvider = ({ children }) => {
   const handleLogin = async (email, password) => {
     try {
       const response = await login(email, password);
+      // Guardar token primero
+      saveToken(response.token);
+      // Luego actualizar el estado
       setToken(response.token);
       setUser(response.user);
-      saveToken(response.token);
+      console.log('✅ Login exitoso, token establecido:', response.token.substring(0, 20) + '...');
       return { success: true };
     } catch (error) {
       console.error('Error en login:', error);
@@ -117,17 +120,51 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const handleRegister = async (email, password, name = '') => {
+    try {
+      const response = await register(email, password, name);
+      // Guardar token primero
+      saveToken(response.token);
+      // Luego actualizar el estado
+      setToken(response.token);
+      setUser(response.user);
+      console.log('✅ Registro exitoso, token establecido:', response.token.substring(0, 20) + '...');
+      return { success: true };
+    } catch (error) {
+      console.error('Error en registro:', error);
+      return { 
+        success: false, 
+        error: error.message || 'Error al registrar usuario' 
+      };
+    }
+  };
+
   const handleLogout = () => {
     setToken(null);
     setUser(null);
     removeToken();
   };
 
+  // Calcular isAuthenticated de manera más confiable
+  const isAuthenticated = useMemo(() => {
+    if (!token) {
+      return false;
+    }
+    const isValid = isTokenValid(token, backendAvailable);
+    
+    // Si el backend está disponible, también verificar que sea JWT
+    if (backendAvailable && isValid) {
+      return isJWTToken(token);
+    }
+    return isValid;
+  }, [token, backendAvailable]);
+
   const value = {
     user,
     token,
-    isAuthenticated: !!token && isTokenValid(token, backendAvailable),
+    isAuthenticated,
     login: handleLogin,
+    register: handleRegister,
     logout: handleLogout,
     loading: loading || checkingBackend,
     backendAvailable,

@@ -114,7 +114,7 @@ export default class CircularMenu {
     })
     document.body.appendChild(this.timer)
 
-    // HUD: Puntos Totales - VISIBLE
+    // HUD: Puntos Totales - VISIBLE (esquina superior derecha, arriba del logout)
     this.status = document.createElement('div')
     this.status.id = 'hud-points'
     this.status.innerText = '🎖️ Puntos Totales: 0'
@@ -122,18 +122,19 @@ export default class CircularMenu {
       position: 'fixed',
       top: '16px',
       right: '20px',
-      fontSize: '16px',
+      fontSize: '15px',
       fontWeight: 'bold',
       background: 'rgba(0,0,0,0.7)',
       color: '#00fff7',
-      padding: '8px 16px',
+      padding: '8px 14px',
       borderRadius: '8px',
       zIndex: 9999,
-      fontFamily: 'monospace',
+      fontFamily: 'sans-serif',
       pointerEvents: 'none',
       display: 'block', // VISIBLE
       border: '1px solid rgba(0, 255, 247, 0.3)',
-      boxShadow: '0 0 10px rgba(0, 255, 247, 0.3)'
+      boxShadow: '0 0 10px rgba(0, 255, 247, 0.3)',
+      backdropFilter: 'blur(10px)'
     })
     document.body.appendChild(this.status)
 

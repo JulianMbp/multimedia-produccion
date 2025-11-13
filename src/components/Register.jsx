@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import './Login.css';
+import './Register.css';
 
-const Login = ({ onSwitchToRegister }) => {
+const Register = ({ onSwitchToLogin }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [points, setPoints] = useState(0);
-  const { login, backendAvailable } = useAuth();
+  const { register, backendAvailable } = useAuth();
   const pointsIntervalRef = useRef(null);
 
   // Generar sonido de beep usando Web Audio API
@@ -37,12 +39,10 @@ const Login = ({ onSwitchToRegister }) => {
   // Contador de puntos animado
   useEffect(() => {
     if (!loading) {
-      // Iniciar contador cuando no está cargando
       if (!pointsIntervalRef.current) {
         pointsIntervalRef.current = setInterval(() => {
           setPoints(prev => {
             const newPoints = prev + Math.floor(Math.random() * 10) + 1;
-            // Reproducir sonido cada 100 puntos
             if (newPoints % 100 === 0) {
               playBeep(800, 50);
             }
@@ -51,7 +51,6 @@ const Login = ({ onSwitchToRegister }) => {
         }, 100);
       }
     } else {
-      // Detener contador cuando está cargando
       if (pointsIntervalRef.current) {
         clearInterval(pointsIntervalRef.current);
         pointsIntervalRef.current = null;
@@ -69,29 +68,37 @@ const Login = ({ onSwitchToRegister }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    setLoading(true);
+    
+    // Validar que las contraseñas coincidan
+    if (password !== confirmPassword) {
+      setError('Las contraseñas no coinciden');
+      return;
+    }
 
-    // Sonido de click
+    // Validar longitud de contraseña
+    if (password.length < 6) {
+      setError('La contraseña debe tener al menos 6 caracteres');
+      return;
+    }
+
+    setLoading(true);
     playBeep(600, 80);
 
     try {
-      const result = await login(email, password);
+      const result = await register(email, password, name);
       
       if (!result.success) {
-        setError(result.error || 'Error al iniciar sesión');
+        setError(result.error || 'Error al registrar usuario');
         setLoading(false);
-        // El contador se reiniciará automáticamente cuando loading sea false
       }
-      // Si es exitoso, el contexto manejará el cambio de estado automáticamente
     } catch (err) {
-      setError(err.message || 'Error al iniciar sesión');
+      setError(err.message || 'Error al registrar usuario');
       setLoading(false);
-      // El contador se reiniciará automáticamente cuando loading sea false
     }
   };
 
   return (
-    <div className="login-container">
+    <div className="register-container">
       {/* Partículas de fondo animadas */}
       <div className="particles">
         {[...Array(20)].map((_, i) => (
@@ -110,20 +117,37 @@ const Login = ({ onSwitchToRegister }) => {
       </div>
 
       {/* Tarjeta principal */}
-      <div className="login-card">
+      <div className="register-card">
         {/* Header con información */}
         <div className="card-header">
           <div className="avatar">
-            <div className="avatar-inner">JB</div>
+            <div className="avatar-inner">+</div>
           </div>
           <div className="user-info">
-            <h2 className="user-name">Juego de Programacion multimedia e ingeneiria web 2025</h2>
-            <p className="user-title">By Julian Bastidas</p>
+            <h2 className="user-name">Crear Cuenta</h2>
+            <p className="user-title">Únete a la aventura</p>
           </div>
         </div>
 
         {/* Formulario */}
-        <form onSubmit={handleSubmit} className="login-form">
+        <form onSubmit={handleSubmit} className="register-form">
+          <div className="form-group">
+            <div className="input-wrapper">
+              <svg className="input-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+              <input
+                id="name"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Nombre (opcional)"
+                disabled={loading}
+                className="modern-input"
+              />
+            </div>
+          </div>
+
           <div className="form-group">
             <div className="input-wrapper">
               <svg className="input-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -152,7 +176,25 @@ const Login = ({ onSwitchToRegister }) => {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Contraseña"
+                placeholder="Contraseña (mín. 6 caracteres)"
+                required
+                disabled={loading}
+                className="modern-input"
+              />
+            </div>
+          </div>
+
+          <div className="form-group">
+            <div className="input-wrapper">
+              <svg className="input-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              <input
+                id="confirmPassword"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Confirmar contraseña"
                 required
                 disabled={loading}
                 className="modern-input"
@@ -171,17 +213,17 @@ const Login = ({ onSwitchToRegister }) => {
 
           <button 
             type="submit" 
-            className={`login-button ${loading ? 'loading' : ''}`}
+            className={`register-button ${loading ? 'loading' : ''}`}
             disabled={loading}
           >
             {loading ? (
               <>
                 <span className="spinner"></span>
-                Iniciando sesión...
+                Creando cuenta...
               </>
             ) : (
               <>
-                <span>Entrar al Juego</span>
+                <span>Crear Cuenta</span>
                 <svg className="button-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                 </svg>
@@ -189,6 +231,21 @@ const Login = ({ onSwitchToRegister }) => {
             )}
           </button>
         </form>
+
+        {/* Enlace para cambiar a login */}
+        <div className="card-footer">
+          <div className="switch-form">
+            <span>¿Ya tienes una cuenta?</span>
+            <button 
+              type="button" 
+              onClick={onSwitchToLogin}
+              className="switch-button"
+              disabled={loading}
+            >
+              Iniciar Sesión
+            </button>
+          </div>
+        </div>
 
         {/* Estado del backend */}
         {backendAvailable !== undefined && (
@@ -203,38 +260,16 @@ const Login = ({ onSwitchToRegister }) => {
             border: `1px solid ${backendAvailable ? '#22c55e' : '#ef4444'}`
           }}>
             {backendAvailable ? (
-              <>✅ Backend conectado - Autenticación requerida</>
+              <>✅ Backend conectado - Registro disponible</>
             ) : (
-              <>⚠️ Backend no disponible - Modo offline</>
+              <>⚠️ Backend no disponible - Registro no disponible</>
             )}
           </div>
         )}
-
-        {/* Footer info */}
-        <div className="card-footer">
-          <div className="info-badge">
-            <svg className="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span>Puerta trasera: admin@admin.com / secret</span>
-          </div>
-          
-          {/* Enlace para cambiar a registro */}
-          <div className="switch-form">
-            <span>¿No tienes una cuenta?</span>
-            <button 
-              type="button" 
-              onClick={onSwitchToRegister}
-              className="switch-button"
-              disabled={loading}
-            >
-              Registrarse
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );
 };
 
-export default Login;
+export default Register;
+

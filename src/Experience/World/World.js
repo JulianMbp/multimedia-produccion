@@ -77,16 +77,16 @@ export default class World {
             this.loader = new ToyCarLoader(this.experience)
             await this.loader.loadFromAPI()
             
-            // 🛣️ Crear vía después de cargar los edificios (solo en nivel 1)
-            if (this.currentLevel === 1) {
-                const buildingPositions = this.loader.getBuildingPositions?.() || []
-                console.log(`🛣️ Creando vía con ${buildingPositions.length} posiciones de edificios`)
-                if (buildingPositions.length > 0) {
-                    this.road = new Road(this.experience, buildingPositions)
-                } else {
-                    console.warn('⚠️ No se encontraron posiciones de edificios para crear la vía')
-                }
-            }
+            // 🛣️ Vía deshabilitada - ya no se crea el suelo de cuadros
+            // if (this.currentLevel === 1) {
+            //     const buildingPositions = this.loader.getBuildingPositions?.() || []
+            //     console.log(`🛣️ Creando vía con ${buildingPositions.length} posiciones de edificios`)
+            //     if (buildingPositions.length > 0) {
+            //         this.road = new Road(this.experience, buildingPositions)
+            //     } else {
+            //         console.warn('⚠️ No se encontraron posiciones de edificios para crear la vía')
+            //     }
+            // }
 
             // 2️⃣ Personajes
             this.fox = new Fox(this.experience)
@@ -546,7 +546,7 @@ export default class World {
     }
     
     createCheeseCounter() {
-        // Indicador de nivel prominente
+        // Indicador de nivel prominente (esquina superior izquierda)
         this.levelIndicator = document.createElement('div')
         this.levelIndicator.id = 'hud-level'
         this.updateLevelIndicator()
@@ -554,11 +554,11 @@ export default class World {
             position: 'fixed',
             top: '16px',
             left: '20px',
-            fontSize: '20px',
+            fontSize: '18px',
             fontWeight: 'bold',
             background: 'linear-gradient(135deg, rgba(0, 255, 247, 0.9), rgba(0, 200, 200, 0.9))',
             color: '#000',
-            padding: '10px 20px',
+            padding: '8px 16px',
             borderRadius: '12px',
             zIndex: 9999,
             fontFamily: 'sans-serif',
@@ -566,11 +566,14 @@ export default class World {
             boxShadow: '0 4px 15px rgba(0, 255, 247, 0.5)',
             border: '2px solid rgba(0, 255, 247, 0.8)',
             textTransform: 'uppercase',
-            letterSpacing: '2px'
+            letterSpacing: '1px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
         })
         document.body.appendChild(this.levelIndicator)
         
-        // Contador de quesos (separado del nivel)
+        // Contador de quesos (debajo del nivel, esquina superior izquierda)
         this.cheeseCounter = document.createElement('div')
         this.cheeseCounter.id = 'hud-cheese'
         this.updateCheeseCounter()
@@ -578,38 +581,40 @@ export default class World {
             position: 'fixed',
             top: '70px',
             left: '20px',
-            fontSize: '16px',
+            fontSize: '15px',
             fontWeight: 'bold',
-            background: 'rgba(0,0,0,0.6)',
+            background: 'rgba(0,0,0,0.7)',
             color: 'white',
-            padding: '6px 12px',
+            padding: '8px 14px',
             borderRadius: '8px',
             zIndex: 9999,
-            fontFamily: 'monospace',
-            pointerEvents: 'none'
+            fontFamily: 'sans-serif',
+            pointerEvents: 'none',
+            backdropFilter: 'blur(10px)'
         })
         document.body.appendChild(this.cheeseCounter)
         
-        // Crear botón para saltar al nivel 2 (solo visible en nivel 1)
+        // Crear botón para saltar al siguiente nivel (debajo del contador de quesos)
         this.skipToLevel2Button = document.createElement('button')
         this.skipToLevel2Button.id = 'skip-level2-button'
         this.skipToLevel2Button.innerText = '⏩ Saltar al Nivel 2'
         Object.assign(this.skipToLevel2Button.style, {
             position: 'fixed',
-            top: '60px',
+            top: '120px',
             left: '20px',
-            fontSize: '14px',
+            fontSize: '13px',
             fontWeight: 'bold',
-            background: 'rgba(255, 165, 0, 0.8)',
+            background: 'rgba(255, 165, 0, 0.85)',
             color: 'white',
-            padding: '8px 16px',
+            padding: '8px 14px',
             borderRadius: '8px',
             border: 'none',
             cursor: 'pointer',
             zIndex: 10000,
             fontFamily: 'sans-serif',
             boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-            transition: 'all 0.3s ease'
+            transition: 'all 0.3s ease',
+            backdropFilter: 'blur(10px)'
         })
         
         // Efecto hover
@@ -618,7 +623,7 @@ export default class World {
             this.skipToLevel2Button.style.transform = 'scale(1.05)'
         })
         this.skipToLevel2Button.addEventListener('mouseleave', () => {
-            this.skipToLevel2Button.style.background = 'rgba(255, 165, 0, 0.8)'
+            this.skipToLevel2Button.style.background = 'rgba(255, 165, 0, 0.85)'
             this.skipToLevel2Button.style.transform = 'scale(1)'
         })
         
@@ -744,6 +749,12 @@ export default class World {
     async startLevel2() {
         console.log('🚀 Iniciando nivel 2...')
         this.currentLevel = 2
+        
+        // Actualizar textura del suelo para el nivel 2
+        if (this.floor && this.floor.updateTextureForLevel) {
+            this.floor.updateTextureForLevel(2)
+            console.log('✅ Textura del suelo actualizada a césped (nivel 2)')
+        }
         
         // Actualizar indicador de nivel
         this.updateLevelIndicator()
@@ -1219,6 +1230,12 @@ export default class World {
     async startLevel3() {
         console.log('🚀 Iniciando nivel 3...')
         this.currentLevel = 3
+        
+        // Actualizar textura del suelo para el nivel 3
+        if (this.floor && this.floor.updateTextureForLevel) {
+            this.floor.updateTextureForLevel(3)
+            console.log('✅ Textura del suelo actualizada a pokemon (nivel 3)')
+        }
         
         // Actualizar indicador de nivel
         this.updateLevelIndicator()
@@ -2128,6 +2145,13 @@ export default class World {
         // Resetear estado del juego
         this.gameOver = false
         this.currentLevel = 1
+        
+        // Actualizar textura del suelo para el nivel 1
+        if (this.floor && this.floor.updateTextureForLevel) {
+            this.floor.updateTextureForLevel(1)
+            console.log('✅ Textura del suelo actualizada a vía (nivel 1)')
+        }
+        
         this.cheesesCollected = 0
         this.updateCheeseCounter()
         

@@ -22,6 +22,21 @@ export default [
         path: '/textures/dirt/normal.jpg'
     },
     {
+        name: 'viaTexture',
+        type: 'texture',
+        path: '/textures/via.png'
+    },
+    {
+        name: 'cerpedTexture',
+        type: 'texture',
+        path: '/textures/cerped.png'
+    },
+    {
+        name: 'pokemonTexture',
+        type: 'texture',
+        path: '/textures/pokemon.png'
+    },
+    {
         name: 'foxModel',
         type: 'gltfModel',
         path: '/models/Fox/glTF/Fox.gltf'

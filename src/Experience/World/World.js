@@ -3,6 +3,8 @@ import * as CANNON from 'cannon-es'
 import * as THREE from 'three'
 import MobileControls from '../../controls/MobileControls.js'
 import ToyCarLoader from '../../loaders/ToyCarLoader.js'
+import { getCoinsCountByLevel } from '../../services/levelsService.js'
+import { getRanking, saveScore } from '../../services/scoresService.js'
 import AmbientSound from './AmbientSound.js'
 import Cheese from './Cheese.js'
 import CheeseParticles from './CheeseParticles.js'
@@ -33,17 +35,27 @@ export default class World {
 
         // Sistema de quesos
         this.cheeses = []
-        this.maxCheeses = 10 // 10 quesos por nivel
+        this.maxCheeses = 1 // TEMPORAL: Para pruebas - cambiar a 10 en producción
         this.cheesesCollected = 0
         this.cheeseModel = null
         this.cheeseParticles = null
         this.portal = null
         this.spawnPosition = new THREE.Vector3(0, 0, 0) // Posición inicial del spawn
         
+        // Sistema de coins del JSON (PASO 4)
+        this.jsonCoinsCollected = { 1: 0, 2: 0, 3: 0 } // Coins del JSON recolectados por nivel
+        this.jsonCoinsTotal = { 1: 0, 2: 0, 3: 0 } // Total de coins del JSON por nivel
+        this.finalPrizeCollected = { 1: false, 2: false, 3: false } // Estado del finalPrize por nivel
+        
         // Sistema de niveles
         this.currentLevel = 1
         this.level2Buildings = [] // Array para guardar los edificios del nivel 2
         this.level3Buildings = [] // Array para guardar los edificios del nivel 3
+        
+        // Sistema de puntos
+        this.points = 0 // Puntos del nivel actual
+        this.totalPoints = 0 // Puntos totales acumulados entre todos los niveles
+        this.pointsByLevel = { 1: 0, 2: 0, 3: 0 } // 📊 PASO 6: Puntos por nivel para desglose
         
         // Sistema de enemigos
         this.enemies = [] // Array para guardar los enemigos
@@ -92,6 +104,12 @@ export default class World {
             // 🧀 Inicializar sistema de quesos
             this.cheeseModel = this.resources.items.cheeseModel
             if (this.cheeseModel) {
+                // Cargar cantidad de coins desde el backend para el nivel actual
+                await this.loadMaxCheesesFromBackend(this.currentLevel)
+                
+                // 📊 PASO 4: Contar coins del JSON por nivel
+                this.countJsonCoinsByLevel()
+                
                 // Generar el primer queso después de un pequeño delay
                 setTimeout(() => {
                     this.generateCheese()
@@ -102,6 +120,9 @@ export default class World {
             
             // Crear contador de quesos en el HUD
             this.createCheeseCounter()
+            
+            // Inicializar HUD de puntos totales
+            this.updatePointsHUD()
             
             // 👾 Inicializar sistema de enemigos
             this.initializeEnemies()
@@ -172,9 +193,21 @@ export default class World {
             this.cheeseParticles.update(robotPos)
         }
         
-        // Actualizar portal
-        if (this.portal) {
+        // Actualizar portal y verificar interacción
+        if (this.portal && this.portal.isActive) {
             this.portal.update(delta)
+            
+            // Verificar si el jugador está cerca del portal
+            if (this.robot && this.robot.body) {
+                const robotPos = this.robot.body.position
+                const portalPos = this.portal.group.position
+                const distance = robotPos.distanceTo(portalPos)
+                
+                // Si el jugador está a menos de 3 metros del portal, transportar
+                if (distance < 3) {
+                    this.enterPortal()
+                }
+            }
         }
 
 
@@ -190,11 +223,28 @@ export default class World {
 
             const dist = prize.pivot.position.distanceTo(pos)
             if (dist < 1.2 && moved) {
+                // 📊 PASO 4: Rastrear coin del JSON recolectado
+                const coinLevel = prize.level || this.currentLevel
+                const coinRole = prize.role || 'default'
+                
+                // Si es un coin con Role="default", incrementar contador
+                if (coinRole === 'default') {
+                    this.jsonCoinsCollected[coinLevel] = (this.jsonCoinsCollected[coinLevel] || 0) + 1
+                    console.log(`🪙 Coin del JSON recolectado (Role=default, Level=${coinLevel}): ${this.jsonCoinsCollected[coinLevel]}/${this.jsonCoinsTotal[coinLevel]}`)
+                }
+                
+                // Si es un coin con Role="finalPrize", marcarlo como recolectado
+                if (coinRole === 'finalPrize') {
+                    this.finalPrizeCollected[coinLevel] = true
+                    console.log(`🏆 Final Prize recolectado en nivel ${coinLevel}!`)
+                }
+                
                 prize.collect()
                 this.loader.prizes.splice(idx, 1)
 
                 // ✅ Incrementar puntos
                 this.points = (this.points || 0) + 1
+                this.totalPoints = (this.totalPoints || 0) + 1 // Acumular en total
                 this.robot.points = this.points
 
                 // 🧹 Limpiar obstáculos
@@ -204,8 +254,12 @@ export default class World {
                 }
 
                 this.coinSound.play()
-                this.experience.menu.setStatus?.(`🎖️ Puntos: ${this.points}`)
-                console.log(`🟡 Premio recogido. Total: ${this.points}`)
+                // Actualizar HUD con puntos totales
+                this.updatePointsHUD()
+                console.log(`🟡 Premio recogido. Puntos nivel: ${this.points}, Total: ${this.totalPoints}`)
+                
+                // 📊 PASO 4: Verificar si se pueden activar condiciones del portal
+                this.checkPortalConditions()
             }
         })
 
@@ -224,6 +278,14 @@ export default class World {
                     this.cheeses.splice(idx, 1)
                     this.cheesesCollected++
                     
+                    // ✅ Incrementar puntos cuando se recolecta un queso
+                    this.points = (this.points || 0) + 1
+                    this.totalPoints = (this.totalPoints || 0) + 1 // Acumular en total
+                    this.robot.points = this.points
+                    
+                    // Actualizar HUD con puntos totales
+                    this.updatePointsHUD()
+                    
                     // Actualizar contador
                     this.updateCheeseCounter()
                     
@@ -240,16 +302,12 @@ export default class World {
                     
                     // Verificar si se completaron todos los quesos
                     if (this.cheesesCollected >= this.maxCheeses) {
-                        if (this.currentLevel === 1) {
-                            // Nivel 1 completado - teletransportar al nivel 2
-                            this.startLevel2()
-                        } else if (this.currentLevel === 2) {
-                            // Nivel 2 completado - teletransportar al nivel 3
-                            this.startLevel3()
-                        } else if (this.currentLevel === 3) {
-                            // Nivel 3 completado - mostrar portal
-                            this.onAllCheesesCollected()
-                        }
+                        // Limpiar enemigos cuando se completa el nivel
+                        this.clearEnemies()
+                        console.log('👾 Enemigos eliminados - nivel completado')
+                        
+                        // 📊 PASO 4: Verificar condiciones del portal (quesos + coins del JSON)
+                        this.checkPortalConditions()
                     } else {
                         // Generar un nuevo queso si no hemos alcanzado el máximo
                         setTimeout(() => {
@@ -274,6 +332,153 @@ export default class World {
 
     }
 
+    /**
+     * Valida si una posición está libre de colisiones con objetos GLB del escenario
+     * @param {THREE.Vector3} position - Posición a validar
+     * @param {number} radius - Radio de seguridad alrededor de la posición
+     * @param {Array} excludeObjects - Objetos a excluir de la validación (quesos, portal, etc.)
+     * @returns {boolean} - true si la posición es válida, false si hay colisión
+     */
+    isPositionValid(position, radius = 2.0, excludeObjects = []) {
+        const testBox = new THREE.Box3()
+        const testSize = new THREE.Vector3(radius * 2, radius * 2, radius * 2)
+        testBox.setFromCenterAndSize(position, testSize)
+        
+        // Crear Set de objetos a excluir para verificación rápida
+        const excludeSet = new Set()
+        excludeObjects.forEach(obj => {
+            if (obj) excludeSet.add(obj)
+            if (obj?.pivot) excludeSet.add(obj.pivot)
+            if (obj?.group) excludeSet.add(obj.group)
+            if (obj?.model) excludeSet.add(obj.model)
+        })
+        
+        // Excluir objetos del juego (robot, fox, floor, road)
+        if (this.robot?.group) excludeSet.add(this.robot.group)
+        if (this.robot?.model) excludeSet.add(this.robot.model)
+        if (this.fox?.model) excludeSet.add(this.fox.model)
+        if (this.floor?.mesh) excludeSet.add(this.floor.mesh)
+        if (this.road?.mesh) excludeSet.add(this.road.mesh)
+        if (this.portal?.group) excludeSet.add(this.portal.group)
+        
+        // Excluir quesos existentes
+        this.cheeses.forEach(cheese => {
+            if (cheese.pivot) excludeSet.add(cheese.pivot)
+        })
+        
+        // Excluir enemigos
+        this.enemies.forEach(enemy => {
+            if (enemy?.group) excludeSet.add(enemy.group)
+            if (enemy?.model) excludeSet.add(enemy.model)
+        })
+        
+        // Obtener todos los objetos GLB del escenario según el nivel actual
+        const sceneObjects = []
+        
+        if (this.currentLevel === 1) {
+            // Nivel 1: usar edificios del ToyCarLoader
+            this.scene.traverse((child) => {
+                if (child instanceof THREE.Mesh && 
+                    !excludeSet.has(child) &&
+                    !excludeSet.has(child.parent) &&
+                    child !== this.floor?.mesh &&
+                    child !== this.road?.mesh) {
+                    // Verificar que no sea de otros niveles
+                    let isOtherLevel = false
+                    if (this.level2Buildings && this.level2Buildings.length > 0) {
+                        this.level2Buildings.forEach(building => {
+                            building.traverse((buildingChild) => {
+                                if (buildingChild === child || buildingChild === child.parent) {
+                                    isOtherLevel = true
+                                }
+                            })
+                        })
+                    }
+                    if (this.level3Buildings && this.level3Buildings.length > 0) {
+                        this.level3Buildings.forEach(building => {
+                            building.traverse((buildingChild) => {
+                                if (buildingChild === child || buildingChild === child.parent) {
+                                    isOtherLevel = true
+                                }
+                            })
+                        })
+                    }
+                    if (!isOtherLevel) {
+                        sceneObjects.push(child)
+                    }
+                }
+            })
+        } else if (this.currentLevel === 2) {
+            // Nivel 2: usar edificios del nivel 2
+            if (this.level2Buildings && this.level2Buildings.length > 0) {
+                this.level2Buildings.forEach(building => {
+                    building.traverse((child) => {
+                        if (child instanceof THREE.Mesh && !excludeSet.has(child) && !excludeSet.has(child.parent)) {
+                            sceneObjects.push(child)
+                        }
+                    })
+                })
+            }
+        } else if (this.currentLevel === 3) {
+            // Nivel 3: usar edificios del nivel 3
+            if (this.level3Buildings && this.level3Buildings.length > 0) {
+                this.level3Buildings.forEach(building => {
+                    building.traverse((child) => {
+                        if (child instanceof THREE.Mesh && !excludeSet.has(child) && !excludeSet.has(child.parent)) {
+                            sceneObjects.push(child)
+                        }
+                    })
+                })
+            }
+        }
+        
+        // Verificar colisiones con bounding boxes
+        for (const obj of sceneObjects) {
+            if (!obj.geometry) continue
+            
+            const objBox = new THREE.Box3()
+            objBox.setFromObject(obj)
+            
+            // Si el objeto tiene un parent con transformación, ajustar el bounding box
+            if (obj.parent && obj.parent !== this.scene) {
+                obj.parent.updateMatrixWorld(true)
+                const worldBox = new THREE.Box3()
+                obj.parent.traverse((child) => {
+                    if (child instanceof THREE.Mesh && child.geometry) {
+                        const childBox = new THREE.Box3().setFromObject(child)
+                        worldBox.union(childBox)
+                    }
+                })
+                if (!worldBox.isEmpty()) {
+                    objBox.copy(worldBox)
+                }
+            }
+            
+            // Verificar si hay intersección
+            if (testBox.intersectsBox(objBox)) {
+                return false // Hay colisión
+            }
+        }
+        
+        // También verificar con raycaster desde arriba para detectar objetos encima
+        const raycaster = new THREE.Raycaster()
+        const fromAbove = new THREE.Vector3(position.x, position.y + 50, position.z)
+        const direction = new THREE.Vector3(0, -1, 0)
+        raycaster.set(fromAbove, direction)
+        
+        const intersects = raycaster.intersectObjects(sceneObjects, true)
+        if (intersects.length > 0) {
+            for (const intersect of intersects) {
+                // Si hay un objeto a más de 0.5 unidades de altura, hay colisión
+                if (intersect.point.y > position.y + 0.5) {
+                    return false
+                }
+            }
+        }
+        
+        return true // Posición válida
+    }
+    
     generateCheese() {
         if (!this.cheeseModel || !this.robot || this.cheeses.length >= this.maxCheeses) {
             return
@@ -284,7 +489,7 @@ export default class World {
         
         // Intentar generar un queso en una posición válida
         let attempts = 0
-        const maxAttempts = 50
+        const maxAttempts = 100 // Aumentar intentos para mejor validación
         
         while (attempts < maxAttempts) {
             // Generar posición aleatoria alrededor del robot (radio de 100 metros)
@@ -294,108 +499,10 @@ export default class World {
             const z = robotPos.z + Math.sin(angle) * distance
             const y = 0.3 // Ligeramente sobre el suelo
             
-            // Verificar que no esté encima de un edificio
-            // Usar raycaster desde arriba hacia abajo para detectar edificios
-            const raycaster = new THREE.Raycaster()
-            const fromAbove = new THREE.Vector3(x, 50, z) // Desde arriba
-            const direction = new THREE.Vector3(0, -1, 0) // Hacia abajo
-            raycaster.set(fromAbove, direction)
+            const cheesePosition = new THREE.Vector3(x, y, z)
             
-            // Obtener todos los meshes de edificios de la escena
-            const buildingMeshes = []
-            const excludedParents = new Set()
-            
-            // Agregar padres a excluir
-            if (this.robot?.group) excludedParents.add(this.robot.group)
-            if (this.robot?.model) excludedParents.add(this.robot.model)
-            if (this.fox?.model) excludedParents.add(this.fox.model)
-            if (this.portal?.group) excludedParents.add(this.portal.group)
-            
-            // Agregar quesos a excluir
-            this.cheeses.forEach(cheese => {
-                if (cheese.pivot) excludedParents.add(cheese.pivot)
-            })
-            
-            // Seleccionar edificios según el nivel actual
-            if (this.currentLevel === 2) {
-                // Solo considerar edificios del nivel 2
-                if (this.level2Buildings && this.level2Buildings.length > 0) {
-                    this.level2Buildings.forEach(building => {
-                        building.traverse((child) => {
-                            if (child instanceof THREE.Mesh) {
-                                buildingMeshes.push(child)
-                            }
-                        })
-                    })
-                }
-            } else if (this.currentLevel === 3) {
-                // Solo considerar edificios del nivel 3
-                if (this.level3Buildings && this.level3Buildings.length > 0) {
-                    this.level3Buildings.forEach(building => {
-                        building.traverse((child) => {
-                            if (child instanceof THREE.Mesh) {
-                                buildingMeshes.push(child)
-                            }
-                        })
-                    })
-                }
-            } else if (this.currentLevel === 1) {
-                // En el nivel 1, usar los edificios del ToyCarLoader
-                // Crear un Set de edificios de otros niveles para verificación rápida
-                const otherLevelBuildingSet = new Set()
-                
-                // Agregar edificios del nivel 2
-                if (this.level2Buildings && this.level2Buildings.length > 0) {
-                    this.level2Buildings.forEach(building => {
-                        otherLevelBuildingSet.add(building)
-                        building.traverse((child) => {
-                            otherLevelBuildingSet.add(child)
-                            if (child.parent) otherLevelBuildingSet.add(child.parent)
-                        })
-                    })
-                }
-                
-                // Agregar edificios del nivel 3
-                if (this.level3Buildings && this.level3Buildings.length > 0) {
-                    this.level3Buildings.forEach(building => {
-                        otherLevelBuildingSet.add(building)
-                        building.traverse((child) => {
-                            otherLevelBuildingSet.add(child)
-                            if (child.parent) otherLevelBuildingSet.add(child.parent)
-                        })
-                    })
-                }
-                
-                // Recorrer la escena buscando edificios del nivel 1
-                this.scene.traverse((child) => {
-                    // Buscar meshes que sean edificios (excluir suelo, vía, robot, zorro, portal, quesos, otros niveles)
-                    if (child instanceof THREE.Mesh && 
-                        child !== this.floor?.mesh && 
-                        child !== this.road?.mesh &&
-                        !excludedParents.has(child.parent) &&
-                        !excludedParents.has(child.parent?.parent) &&
-                        !otherLevelBuildingSet.has(child) &&
-                        !otherLevelBuildingSet.has(child.parent)) {
-                        buildingMeshes.push(child)
-                    }
-                })
-            }
-            
-            // Verificar intersecciones con edificios
-            const intersects = raycaster.intersectObjects(buildingMeshes, true)
-            
-            // Si hay intersección con un edificio a una altura mayor a 0.5, no es válido
-            let isOnBuilding = false
-            if (intersects.length > 0) {
-                for (const intersect of intersects) {
-                    if (intersect.point.y > 0.5) {
-                        isOnBuilding = true
-                        break
-                    }
-                }
-            }
-            
-            if (isOnBuilding) {
+            // ✅ Validar posición usando la función genérica
+            if (!this.isPositionValid(cheesePosition, 1.5, this.cheeses)) {
                 attempts++
                 continue
             }
@@ -404,7 +511,7 @@ export default class World {
             let tooClose = false
             for (const existingCheese of this.cheeses) {
                 if (existingCheese.pivot) {
-                    const dist = new THREE.Vector3(x, y, z).distanceTo(existingCheese.pivot.position)
+                    const dist = cheesePosition.distanceTo(existingCheese.pivot.position)
                     if (dist < 1.5) {
                         tooClose = true
                         break
@@ -418,7 +525,6 @@ export default class World {
             }
             
             // Posición válida, crear el queso
-            const cheesePosition = new THREE.Vector3(x, y, z)
             const cheese = new Cheese({
                 model: this.cheeseModel.scene,
                 position: cheesePosition,
@@ -440,12 +546,37 @@ export default class World {
     }
     
     createCheeseCounter() {
+        // Indicador de nivel prominente
+        this.levelIndicator = document.createElement('div')
+        this.levelIndicator.id = 'hud-level'
+        this.updateLevelIndicator()
+        Object.assign(this.levelIndicator.style, {
+            position: 'fixed',
+            top: '16px',
+            left: '20px',
+            fontSize: '20px',
+            fontWeight: 'bold',
+            background: 'linear-gradient(135deg, rgba(0, 255, 247, 0.9), rgba(0, 200, 200, 0.9))',
+            color: '#000',
+            padding: '10px 20px',
+            borderRadius: '12px',
+            zIndex: 9999,
+            fontFamily: 'sans-serif',
+            pointerEvents: 'none',
+            boxShadow: '0 4px 15px rgba(0, 255, 247, 0.5)',
+            border: '2px solid rgba(0, 255, 247, 0.8)',
+            textTransform: 'uppercase',
+            letterSpacing: '2px'
+        })
+        document.body.appendChild(this.levelIndicator)
+        
+        // Contador de quesos (separado del nivel)
         this.cheeseCounter = document.createElement('div')
         this.cheeseCounter.id = 'hud-cheese'
         this.updateCheeseCounter()
         Object.assign(this.cheeseCounter.style, {
             position: 'fixed',
-            top: '16px',
+            top: '70px',
             left: '20px',
             fontSize: '16px',
             fontWeight: 'bold',
@@ -521,12 +652,50 @@ export default class World {
         }
     }
     
+    updateLevelIndicator() {
+        if (this.levelIndicator) {
+            this.levelIndicator.innerText = `🎮 Nivel ${this.currentLevel}`
+        }
+    }
+    
     updateCheeseCounter() {
         if (this.cheeseCounter) {
-            this.cheeseCounter.innerText = `🧀 Nivel ${this.currentLevel} - Quesos: ${this.cheesesCollected}/${this.maxCheeses}`
+            this.cheeseCounter.innerText = `🧀 Quesos: ${this.cheesesCollected}/${this.maxCheeses}`
         }
         // Actualizar visibilidad del botón de saltar
         this.updateSkipButtonVisibility()
+    }
+    
+    updatePointsHUD() {
+        // Actualizar HUD de puntos con totales
+        if (this.experience.menu && this.experience.menu.status) {
+            this.experience.menu.status.innerText = `🎖️ Puntos Totales: ${this.totalPoints}`
+            // Hacer visible el HUD de puntos
+            if (this.experience.menu.status.style.display === 'none') {
+                this.experience.menu.status.style.display = 'block'
+            }
+        }
+    }
+    
+    /**
+     * Carga la cantidad máxima de coins desde el backend para un nivel específico
+     * @param {number} level - Número del nivel (1, 2, 3)
+     */
+    async loadMaxCheesesFromBackend(level) {
+        try {
+            const coinsCount = await getCoinsCountByLevel(level)
+            // TEMPORAL: Para pruebas, usar 1 en lugar del valor del backend
+            // this.maxCheeses = coinsCount
+            this.maxCheeses = 1 // TEMPORAL: Cambiar a coinsCount en producción
+            console.log(`📊 maxCheeses desde backend para nivel ${level}: ${coinsCount} (usando 1 para pruebas)`)
+            
+            // Actualizar contador si ya existe
+            this.updateCheeseCounter()
+        } catch (error) {
+            console.warn(`⚠️ Error al cargar maxCheeses desde backend para nivel ${level}:`, error)
+            // TEMPORAL: Para pruebas, usar 1
+            this.maxCheeses = 1 // TEMPORAL: Cambiar a 10 en producción
+        }
     }
     
     showCheeseNotification() {
@@ -574,9 +743,28 @@ export default class World {
         }, 2000)
     }
     
-    startLevel2() {
+    async startLevel2() {
         console.log('🚀 Iniciando nivel 2...')
         this.currentLevel = 2
+        
+        // Actualizar indicador de nivel
+        this.updateLevelIndicator()
+        
+        // Cargar cantidad de coins desde el backend para el nivel 2
+        await this.loadMaxCheesesFromBackend(2)
+        
+        // 📊 PASO 4: Contar coins del JSON por nivel (actualizar contadores)
+        this.countJsonCoinsByLevel()
+        
+        // Resetear contador de quesos recolectados (pero mantener puntos totales)
+        this.cheesesCollected = 0
+        // 📊 PASO 6: Guardar puntos del nivel 1 antes de resetear
+        this.pointsByLevel[1] = this.points
+        this.points = 0 // Resetear puntos del nivel, pero totalPoints se mantiene
+        
+        // 📊 PASO 4: Resetear contadores de coins del JSON para el nivel 2
+        this.jsonCoinsCollected[2] = 0
+        this.finalPrizeCollected[2] = false
         
         // Ocultar el botón de saltar al nivel 2
         this.updateSkipButtonVisibility()
@@ -644,6 +832,13 @@ export default class World {
         
         // Limpiar enemigos del nivel 1
         this.clearEnemies()
+        
+        // Remover portal del nivel anterior si existe
+        if (this.portal && this.portal.group) {
+            this.scene.remove(this.portal.group)
+            this.portal = null
+            console.log('🗑️ Portal del nivel anterior removido')
+        }
         
         // Teletransportar al jugador a una posición central del nivel 2
         if (this.robot && this.robot.body) {
@@ -903,15 +1098,27 @@ export default class World {
                     // Posicionar en el suelo - ajustar Y para que la base esté en Y = 0
                     y = -bbox.min.y
                     
-                    // Crear física para el edificio
+                    // Crear física para el edificio (sólido, no penetrable)
                     if (size.x > 0 && size.y > 0 && size.z > 0) {
-                        const shape = new CANNON.Box(new CANNON.Vec3(size.x / 2 * 0.9, size.y / 2 * 0.9, size.z / 2 * 0.9))
+                        const shape = new CANNON.Box(new CANNON.Vec3(size.x / 2 * 0.95, size.y / 2 * 0.95, size.z / 2 * 0.95))
                         const body = new CANNON.Body({
-                            mass: 0,
+                            mass: 0, // Masa 0 = estático (no se puede mover)
+                            type: CANNON.Body.KINEMATIC, // Tipo cinemático para objetos estáticos sólidos
                             shape: shape,
                             position: new CANNON.Vec3(x + localCenter.x, y + localCenter.y, z + localCenter.z),
                             material: this.experience.physics.obstacleMaterial
                         })
+                        
+                        // Asegurar que el cuerpo sea completamente estático y sólido
+                        body.fixedRotation = true // No rotar
+                        body.updateMassProperties() // Actualizar propiedades de masa
+                        
+                        // Configurar como objeto sólido no penetrable
+                        body.collisionFilterGroup = 1 // Grupo de colisión para edificios
+                        body.collisionFilterMask = -1 // Colisiona con todo
+                        body.isTrigger = false // No es un trigger, es un objeto sólido
+                        body.allowSleep = false // No permitir que se duerma (siempre activo)
+                        
                         this.experience.physics.world.addBody(body)
                     }
                 }
@@ -1011,9 +1218,28 @@ export default class World {
         }
     }
     
-    startLevel3() {
+    async startLevel3() {
         console.log('🚀 Iniciando nivel 3...')
         this.currentLevel = 3
+        
+        // Actualizar indicador de nivel
+        this.updateLevelIndicator()
+        
+        // Cargar cantidad de coins desde el backend para el nivel 3
+        await this.loadMaxCheesesFromBackend(3)
+        
+        // 📊 PASO 4: Contar coins del JSON por nivel (actualizar contadores)
+        this.countJsonCoinsByLevel()
+        
+        // Resetear contador de quesos recolectados (pero mantener puntos totales)
+        this.cheesesCollected = 0
+        // 📊 PASO 6: Guardar puntos del nivel 2 antes de resetear
+        this.pointsByLevel[2] = this.points
+        this.points = 0 // Resetear puntos del nivel, pero totalPoints se mantiene
+        
+        // 📊 PASO 4: Resetear contadores de coins del JSON para el nivel 3
+        this.jsonCoinsCollected[3] = 0
+        this.finalPrizeCollected[3] = false
         
         // Ocultar el botón de saltar al nivel 2 (si existe)
         this.updateSkipButtonVisibility()
@@ -1091,6 +1317,13 @@ export default class World {
         
         // Limpiar enemigos del nivel 2
         this.clearEnemies()
+        
+        // Remover portal del nivel anterior si existe
+        if (this.portal && this.portal.group) {
+            this.scene.remove(this.portal.group)
+            this.portal = null
+            console.log('🗑️ Portal del nivel anterior removido')
+        }
         
         // Teletransportar al jugador a una posición central del nivel 3
         if (this.robot && this.robot.body) {
@@ -1354,15 +1587,27 @@ export default class World {
                     // Posicionar en el suelo - ajustar Y para que la base esté en Y = 0
                     y = -bbox.min.y
                     
-                    // Crear física para el edificio
+                    // Crear física para el edificio (sólido, no penetrable)
                     if (size.x > 0 && size.y > 0 && size.z > 0) {
-                        const shape = new CANNON.Box(new CANNON.Vec3(size.x / 2 * 0.9, size.y / 2 * 0.9, size.z / 2 * 0.9))
+                        const shape = new CANNON.Box(new CANNON.Vec3(size.x / 2 * 0.95, size.y / 2 * 0.95, size.z / 2 * 0.95))
                         const body = new CANNON.Body({
-                            mass: 0,
+                            mass: 0, // Masa 0 = estático (no se puede mover)
+                            type: CANNON.Body.KINEMATIC, // Tipo cinemático para objetos estáticos sólidos
                             shape: shape,
                             position: new CANNON.Vec3(x + localCenter.x, y + localCenter.y, z + localCenter.z),
                             material: this.experience.physics.obstacleMaterial
                         })
+                        
+                        // Asegurar que el cuerpo sea completamente estático y sólido
+                        body.fixedRotation = true // No rotar
+                        body.updateMassProperties() // Actualizar propiedades de masa
+                        
+                        // Configurar como objeto sólido no penetrable
+                        body.collisionFilterGroup = 1 // Grupo de colisión para edificios
+                        body.collisionFilterMask = -1 // Colisiona con todo
+                        body.isTrigger = false // No es un trigger, es un objeto sólido
+                        body.allowSleep = false // No permitir que se duerma (siempre activo)
+                        
                         this.experience.physics.world.addBody(body)
                     }
                 }
@@ -1466,12 +1711,99 @@ export default class World {
         }
     }
     
+    /**
+     * 📊 PASO 4: Contar coins del JSON por nivel
+     */
+    countJsonCoinsByLevel() {
+        if (!this.loader) {
+            console.warn('⚠️ Loader no disponible para contar coins del JSON')
+            return
+        }
+        
+        // Contar coins por nivel y role
+        for (let level = 1; level <= 3; level++) {
+            const coinsDefault = this.loader.getCoinsCountByLevel(level, 'default')
+            const coinsFinalPrize = this.loader.getCoinsCountByLevel(level, 'finalPrize')
+            
+            this.jsonCoinsTotal[level] = coinsDefault
+            this.jsonCoinsCollected[level] = 0 // Resetear contador
+            this.finalPrizeCollected[level] = false // Resetear finalPrize
+            
+            console.log(`📊 Nivel ${level}: ${coinsDefault} coins (Role=default), ${coinsFinalPrize} coins (Role=finalPrize)`)
+        }
+    }
+    
+    /**
+     * 📊 PASO 4: Verificar condiciones para activar el portal
+     */
+    checkPortalConditions() {
+        const level = this.currentLevel
+        
+        // Verificar si todos los coins del JSON con Role="default" están recolectados
+        const allDefaultCoinsCollected = this.jsonCoinsCollected[level] >= this.jsonCoinsTotal[level]
+        
+        // Verificar si el finalPrize está recolectado (si existe)
+        const finalPrizeExists = this.loader.getCoinsCountByLevel(level, 'finalPrize') > 0
+        const finalPrizeCollected = !finalPrizeExists || this.finalPrizeCollected[level]
+        
+        // Verificar si todos los quesos dinámicos están recolectados
+        const allCheesesCollected = this.cheesesCollected >= this.maxCheeses
+        
+        console.log(`🔍 Verificación portal nivel ${level}:`, {
+            defaultCoins: `${this.jsonCoinsCollected[level]}/${this.jsonCoinsTotal[level]}`,
+            allDefaultCoinsCollected,
+            finalPrizeCollected,
+            allCheesesCollected,
+            cheeses: `${this.cheesesCollected}/${this.maxCheeses}`
+        })
+        
+        // Si todas las condiciones se cumplen, activar portal
+        if (allDefaultCoinsCollected && finalPrizeCollected && allCheesesCollected) {
+            console.log('✅ Todas las condiciones cumplidas - activando portal')
+            this.onAllCheesesCollected()
+        } else {
+            console.log('⏳ Esperando condiciones para activar portal')
+        }
+    }
+    
     onAllCheesesCollected() {
-        console.log('🎉 ¡Todos los quesos recogidos!')
+        console.log(`🎉 ¡Todos los quesos recogidos en nivel ${this.currentLevel}!`)
+        console.log(`📊 Estado actual: cheesesCollected=${this.cheesesCollected}, maxCheeses=${this.maxCheeses}`)
+        
+        // 📊 PASO 4: Validar que todos los coins del JSON también estén recolectados
+        const level = this.currentLevel
+        const allDefaultCoinsCollected = this.jsonCoinsCollected[level] >= this.jsonCoinsTotal[level]
+        const finalPrizeExists = this.loader.getCoinsCountByLevel(level, 'finalPrize') > 0
+        const finalPrizeCollected = !finalPrizeExists || this.finalPrizeCollected[level]
+        
+        if (!allDefaultCoinsCollected) {
+            console.log(`⏳ Esperando coins del JSON: ${this.jsonCoinsCollected[level]}/${this.jsonCoinsTotal[level]}`)
+            return
+        }
+        
+        if (!finalPrizeCollected) {
+            console.log(`⏳ Esperando finalPrize del nivel ${level}`)
+            return
+        }
+        
+        console.log(`✅ Validación completa: todos los coins del JSON y quesos dinámicos recolectados`)
+        
+        // Evitar crear múltiples portales
+        if (this.portal) {
+            console.log('⚠️ Portal ya existe, no se creará otro')
+            console.log('🔍 Estado del portal:', {
+                exists: !!this.portal,
+                isActive: this.portal.isActive,
+                hasGroup: !!this.portal.group,
+                position: this.portal.group?.position
+            })
+            return
+        }
         
         // Mostrar notificación de completado
         const notification = document.createElement('div')
-        notification.innerText = '🎉 ¡Todos los quesos recogidos!\n🌀 El portal ha aparecido!'
+        const levelText = this.currentLevel === 3 ? '¡Juego completado!' : `¡Nivel ${this.currentLevel} completado!`
+        notification.innerText = `🎉 ${levelText}\n🌀 El portal ha aparecido!\n🚶 Camina hasta él para continuar`
         notification.style.cssText = `
             position: fixed;
             top: 50%;
@@ -1496,19 +1828,132 @@ export default class World {
             notification.remove()
         }, 4000)
         
-        // Crear el portal en la posición inicial del spawn (en el suelo)
-        // El portal se genera completamente con Three.js, sin necesidad de modelo GLB
-        const portalPosition = new THREE.Vector3(
-            this.spawnPosition.x,
-            0, // Forzar Y = 0 para que esté en el suelo
-            this.spawnPosition.z
-        )
-        this.portal = new Portal({
-            position: portalPosition,
-            scene: this.scene
-        })
-        this.portal.activate()
-        console.log('🌀 Portal creado en:', portalPosition)
+        // Calcular posición del portal a 50 metros del personaje
+        if (!this.robot || !this.robot.body) {
+            console.error('❌ No se puede crear portal: robot no disponible')
+            return
+        }
+        
+        const robotPos = this.robot.body.position
+        const portalDistance = 50 // 50 metros
+        
+        // ✅ Buscar una posición válida para el portal (sin colisiones con objetos GLB)
+        let portalPosition = null
+        let attempts = 0
+        const maxAttempts = 100
+        
+        while (attempts < maxAttempts && !portalPosition) {
+            // Calcular dirección aleatoria
+            const angle = Math.random() * Math.PI * 2
+            const candidatePosition = new THREE.Vector3(
+                robotPos.x + Math.cos(angle) * portalDistance,
+                0, // Forzar Y = 0 para que esté en el suelo
+                robotPos.z + Math.sin(angle) * portalDistance
+            )
+            
+            // Validar posición (radio más grande para el portal: 3.0 metros)
+            if (this.isPositionValid(candidatePosition, 3.0, [])) {
+                portalPosition = candidatePosition
+                break
+            }
+            
+            attempts++
+        }
+        
+        // Si no se encontró posición válida después de muchos intentos, usar posición por defecto
+        if (!portalPosition) {
+            console.warn('⚠️ No se encontró posición válida para el portal después de muchos intentos, usando posición por defecto')
+            const defaultAngle = Math.random() * Math.PI * 2
+            portalPosition = new THREE.Vector3(
+                robotPos.x + Math.cos(defaultAngle) * portalDistance,
+                0,
+                robotPos.z + Math.sin(defaultAngle) * portalDistance
+            )
+        }
+        
+        console.log(`🌀 Creando portal en nivel ${this.currentLevel}...`)
+        console.log(`📍 Posición del robot:`, robotPos)
+        console.log(`📍 Posición calculada del portal:`, portalPosition)
+        console.log(`✅ Posición validada: sin colisiones con objetos GLB`)
+        
+        try {
+            this.portal = new Portal({
+                position: portalPosition,
+                scene: this.scene,
+                resources: this.resources
+            })
+            this.portal.activate()
+            console.log('✅ Portal creado y activado exitosamente')
+            console.log('🔍 Estado del portal:', {
+                exists: !!this.portal,
+                isActive: this.portal.isActive,
+                hasGroup: !!this.portal.group,
+                groupInScene: this.portal.group ? this.scene.children.includes(this.portal.group) : false
+            })
+        } catch (error) {
+            console.error('❌ Error al crear portal:', error)
+        }
+    }
+    
+    enterPortal() {
+        if (!this.portal || !this.portal.isActive) return
+        
+        console.log('🌀 Entrando al portal...')
+        
+        // Desactivar portal para evitar múltiples activaciones
+        this.portal.isActive = false
+        
+        // Mostrar notificación de teletransporte
+        const notification = document.createElement('div')
+        let levelText = ''
+        
+        if (this.currentLevel === 1) {
+            levelText = '🌟 ¡Nivel 1 completado!\n🌀 Teletransportando al Nivel 2...'
+        } else if (this.currentLevel === 2) {
+            levelText = '🌟 ¡Nivel 2 completado!\n🌀 Teletransportando al Nivel 3...'
+        } else if (this.currentLevel === 3) {
+            levelText = '🎉 ¡Juego completado!\n🏆 ¡Felicidades!'
+            // Aquí se puede mostrar pantalla final
+        }
+        
+        notification.innerText = levelText
+        notification.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 215, 0, 0.9);
+            color: #000;
+            padding: 30px 50px;
+            font-size: 28px;
+            font-weight: bold;
+            font-family: sans-serif;
+            border-radius: 12px;
+            z-index: 10000;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            pointer-events: none;
+            text-align: center;
+            white-space: pre-line;
+            animation: fadeInOut 3s ease-in-out;
+        `
+        document.body.appendChild(notification)
+        setTimeout(() => {
+            notification.remove()
+        }, 3000)
+        
+        // Transportar al siguiente nivel después de un delay
+        setTimeout(() => {
+            if (this.currentLevel === 1) {
+                this.startLevel2()
+            } else if (this.currentLevel === 2) {
+                this.startLevel3()
+            } else if (this.currentLevel === 3) {
+                // 📊 PASO 6: Nivel 3 completado - guardar puntos y mostrar pantalla final
+                this.pointsByLevel[3] = this.points
+                console.log('🎉 ¡Juego completado!')
+                this.showFinalScreen()
+            }
+        }, 1500)
     }
     
     initializeEnemies() {
@@ -1735,6 +2180,139 @@ export default class World {
         }, 1500)
         
         console.log('✅ Juego reiniciado')
+    }
+    
+    /**
+     * 📊 PASO 6: Mostrar pantalla final con puntos totales
+     */
+    async showFinalScreen() {
+        console.log('🎬 Iniciando showFinalScreen()...')
+        
+        // Marcar juego como terminado
+        this.gameOver = true
+        
+        // Detener sonidos (manejar error sin detener ejecución)
+        try {
+            if (this.ambientSound && this.ambientSound.isPlaying) {
+                // AmbientSound usa toggle() para detener, pero solo si está reproduciéndose
+                if (this.ambientSound.isPlaying && this.ambientSound.source) {
+                    this.ambientSound.source.stop()
+                    this.ambientSound.isPlaying = false
+                    console.log('🔇 Sonido ambiental detenido')
+                }
+            }
+        } catch (error) {
+            console.warn('⚠️ Error al detener sonido ambiental (continuando):', error)
+        }
+        
+        // Reproducir sonido de victoria
+        try {
+            if (this.winner) {
+                this.winner.play()
+            }
+        } catch (error) {
+            console.warn('⚠️ Error al reproducir sonido de victoria:', error)
+        }
+        
+        // 📊 Guardar puntuación en el backend (si está disponible)
+        let scoreSaved = false
+        try {
+            console.log('💾 Intentando guardar puntuación...')
+            const savedScore = await saveScore(
+                this.totalPoints,
+                this.pointsByLevel,
+                null // gameTime opcional, se puede agregar después
+            )
+            if (savedScore) {
+                scoreSaved = true
+                console.log('✅ Puntuación guardada en el backend')
+            } else {
+                console.log('⚠️ Puntuación no se pudo guardar (sin token o backend no disponible)')
+            }
+        } catch (error) {
+            console.warn('⚠️ No se pudo guardar la puntuación en el backend:', error)
+        }
+        
+        // Obtener ranking global (opcional)
+        let ranking = []
+        try {
+            console.log('📊 Obteniendo ranking...')
+            ranking = await getRanking(5) // Top 5 para mostrar en el modal
+            console.log(`📊 Ranking obtenido: ${ranking.length} puntuaciones`)
+        } catch (error) {
+            console.warn('⚠️ No se pudo obtener el ranking:', error)
+        }
+        
+        // Obtener modal manager desde experience
+        console.log('🔍 Verificando modal manager...')
+        const modal = this.experience?.modal
+        
+        console.log('🔍 Modal disponible:', !!modal)
+        console.log('🔍 Modal.show es función:', typeof modal?.show === 'function')
+        
+        if (!modal || typeof modal.show !== 'function') {
+            console.error('❌ Modal no disponible, usando alert como fallback')
+            // Fallback: mostrar alerta básica
+            alert(`🎉 ¡Juego Completado!\n\n🏆 Puntos Totales: ${this.totalPoints}\n\nNivel 1: ${this.pointsByLevel[1]} puntos\nNivel 2: ${this.pointsByLevel[2]} puntos\nNivel 3: ${this.pointsByLevel[3]} puntos`)
+            return
+        }
+        
+        // Construir mensaje con desglose de puntos
+        const breakdown = `📊 Desglose por nivel:\n• Nivel 1: ${this.pointsByLevel[1]} puntos\n• Nivel 2: ${this.pointsByLevel[2]} puntos\n• Nivel 3: ${this.pointsByLevel[3]} puntos`
+        
+        // Agregar información del ranking si está disponible
+        let rankingText = ''
+        if (ranking.length > 0) {
+            rankingText = `\n\n🏆 Top 5 Ranking:\n`
+            ranking.forEach((score, index) => {
+                const userName = score.user?.email || score.user?.name || 'Anónimo'
+                rankingText += `${index + 1}. ${userName}: ${score.totalPoints} pts\n`
+            })
+        }
+        
+        const message = `🎉 ¡Felicidades!\n\nHas completado todos los niveles del juego.\n\n🏆 Puntos Totales: ${this.totalPoints}\n\n${breakdown}${rankingText}${scoreSaved ? '\n✅ Puntuación guardada en el servidor' : ''}`
+        
+        console.log('📝 Mensaje del modal:', message)
+        console.log('🎯 Mostrando modal final...')
+        
+        // Mostrar modal final
+        try {
+            modal.show({
+                icon: '🏆',
+                message: message,
+                buttons: [
+                    {
+                        text: '🔄 Reiniciar Juego',
+                        onClick: () => {
+                            console.log('🔄 Reiniciando juego...')
+                            this.resetGame()
+                            modal.hide()
+                        }
+                    },
+                    {
+                        text: '🏠 Menú Principal',
+                        onClick: () => {
+                            console.log('🏠 Volviendo al menú principal...')
+                            modal.hide()
+                            // Recargar página para volver al menú principal
+                            window.location.reload()
+                        }
+                    }
+                ]
+            })
+            console.log('✅ Modal mostrado exitosamente')
+        } catch (error) {
+            console.error('❌ Error al mostrar modal:', error)
+            // Fallback: alert
+            alert(message)
+        }
+        
+        console.log('✅ Pantalla final mostrada')
+        console.log(`📊 Puntos totales: ${this.totalPoints}`)
+        console.log(`📊 Desglose: Nivel 1: ${this.pointsByLevel[1]}, Nivel 2: ${this.pointsByLevel[2]}, Nivel 3: ${this.pointsByLevel[3]}`)
+        if (scoreSaved) {
+            console.log('✅ Puntuación guardada en el backend')
+        }
     }
 
 }

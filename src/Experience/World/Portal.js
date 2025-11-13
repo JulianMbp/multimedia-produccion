@@ -1,22 +1,32 @@
 import * as THREE from 'three'
 
 export default class Portal {
-    constructor({ position, scene }) {
+    constructor({ position, scene, resources }) {
         this.scene = scene
         this.position = position
+        this.resources = resources
         this.isActive = false
         this.time = 0
+        
+        // 📊 PASO 5: Variables para efectos de vórtice matemáticos
+        this.vortexStrength = 1.0 // Intensidad del vórtice
+        this.vortexSpeed = 2.0 // Velocidad de rotación del vórtice
+        this.spiralTightness = 0.5 // Qué tan apretada es la espiral (0-1)
+        this.particleVortexData = [] // Datos para partículas en espiral
 
         // Crear grupo para el portal
         this.group = new THREE.Group()
         // Asegurar que el portal esté en el suelo (Y = 0)
         this.group.position.set(position.x, 0, position.z)
 
-        // Crear el portal completo desde cero con Three.js
-        this.createPortalStructure()
+        // Cargar modelo GLB del portal
+        this.loadPortalModel()
         
         // Agregar efectos visuales
         this.addEffects()
+        
+        // Crear círculo vertical del portal (para poder entrar caminando)
+        this.createVerticalPortalCircle()
         
         // Crear partículas que salen del portal
         this.createPortalParticles()
@@ -24,6 +34,66 @@ export default class Portal {
         // Inicialmente oculto
         this.group.visible = false
         this.scene.add(this.group)
+    }
+    
+    loadPortalModel() {
+        // Obtener el modelo del portal desde los recursos
+        const portalGLB = this.resources?.items?.portalModel
+        
+        if (!portalGLB) {
+            console.warn('⚠️ Modelo del portal no encontrado, usando estructura básica')
+            this.createPortalStructure()
+            return
+        }
+        
+        // Clonar el modelo para evitar modificar el original
+        this.portalMesh = portalGLB.scene.clone()
+        
+        // Configurar escala del portal (muy reducida para que sea pequeño)
+        const scale = 0.005 // Escala muy reducida - ajustar según necesidad
+        this.portalMesh.scale.set(scale, scale, scale)
+        this.baseScale = scale // Guardar escala base
+        
+        // Centrar y posicionar el modelo en el suelo
+        // Calcular bounding box para centrar correctamente
+        const box = new THREE.Box3().setFromObject(this.portalMesh)
+        const center = box.getCenter(new THREE.Vector3())
+        const size = box.getSize(new THREE.Vector3())
+        
+        // Ajustar posición para que la base esté en Y=0
+        this.portalMesh.position.y = -center.y + (size.y / 2)
+        this.portalMesh.position.x = -center.x
+        this.portalMesh.position.z = -center.z
+        
+        // Aplicar rotación si es necesario (ajustar según el modelo)
+        // this.portalMesh.rotation.y = Math.PI // Rotar 180° si es necesario
+        
+        // Habilitar sombras si el modelo las tiene
+        this.portalMesh.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+                child.castShadow = true
+                child.receiveShadow = true
+                
+                // Mejorar materiales si es necesario
+                if (child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(mat => {
+                            if (mat instanceof THREE.MeshStandardMaterial) {
+                                mat.emissive = mat.emissive || new THREE.Color(0x00ffff)
+                                mat.emissiveIntensity = mat.emissiveIntensity || 0.3
+                            }
+                        })
+                    } else if (child.material instanceof THREE.MeshStandardMaterial) {
+                        child.material.emissive = child.material.emissive || new THREE.Color(0x00ffff)
+                        child.material.emissiveIntensity = child.material.emissiveIntensity || 0.3
+                    }
+                }
+            }
+        })
+        
+        this.group.add(this.portalMesh)
+        console.log('✅ Modelo del portal cargado y configurado')
+        console.log(`📏 Tamaño del portal: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`)
     }
 
     createPortalStructure() {
@@ -216,6 +286,92 @@ export default class Portal {
         this.verticalGlow = verticalGlow
     }
 
+    createVerticalPortalCircle() {
+        // Crear un círculo vertical grande para el efecto del portal
+        const portalRadius = 2.5 // Radio del círculo del portal
+        const portalCircleGeometry = new THREE.CircleGeometry(portalRadius, 64)
+        const portalCircleMaterial = new THREE.MeshStandardMaterial({
+            color: 0x00ffff,
+            emissive: 0x00ffff,
+            emissiveIntensity: 0.8,
+            transparent: true,
+            opacity: 0.6,
+            side: THREE.DoubleSide,
+            metalness: 0.5,
+            roughness: 0.3
+        })
+        
+        // Círculo vertical (perpendicular al suelo) - rotar 90° en X para que sea vertical
+        this.portalCircle = new THREE.Mesh(portalCircleGeometry, portalCircleMaterial)
+        this.portalCircle.rotation.x = Math.PI / 2 // Rotar 90° para que sea vertical
+        this.portalCircle.position.y = 2.5 // Altura del centro del portal
+        this.group.add(this.portalCircle)
+        
+        // Agregar borde brillante al círculo vertical
+        const edgeGeometry = new THREE.RingGeometry(portalRadius * 0.95, portalRadius, 64)
+        const edgeMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00ffff,
+            transparent: true,
+            opacity: 0.9,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending
+        })
+        this.portalEdge = new THREE.Mesh(edgeGeometry, edgeMaterial)
+        this.portalEdge.rotation.x = Math.PI / 2 // Rotar 90° para que sea vertical
+        this.portalEdge.position.y = 2.5
+        this.group.add(this.portalEdge)
+        
+        console.log('✅ Círculo vertical del portal creado')
+    }
+    
+    /**
+     * 📊 PASO 5: Espiral de Arquímedes
+     * r = a * θ
+     * @param {number} theta - Ángulo en radianes
+     * @param {number} a - Constante que controla el espaciado
+     * @returns {number} - Radio
+     */
+    archimedeanSpiral(theta, a = 0.1) {
+        return a * theta
+    }
+    
+    /**
+     * 📊 PASO 5: Espiral Logarítmica
+     * r = a * e^(b * θ)
+     * @param {number} theta - Ángulo en radianes
+     * @param {number} a - Constante base
+     * @param {number} b - Constante de crecimiento
+     * @returns {number} - Radio
+     */
+    logarithmicSpiral(theta, a = 0.5, b = 0.15) {
+        return a * Math.exp(b * theta)
+    }
+    
+    /**
+     * 📊 PASO 5: Función de distorsión usando seno/coseno
+     * @param {number} x - Coordenada X
+     * @param {number} z - Coordenada Z
+     * @param {number} time - Tiempo
+     * @param {number} frequency - Frecuencia de la distorsión
+     * @param {number} amplitude - Amplitud de la distorsión
+     * @returns {THREE.Vector3} - Vector de distorsión
+     */
+    distortionFunction(x, z, time, frequency = 2.0, amplitude = 0.3) {
+        const dist = Math.sqrt(x * x + z * z)
+        const angle = Math.atan2(z, x)
+        
+        // Distorsión radial usando seno
+        const radialDistortion = Math.sin(dist * frequency + time * 2) * amplitude
+        // Distorsión angular usando coseno
+        const angularDistortion = Math.cos(angle * 3 + time * 1.5) * amplitude * 0.5
+        
+        return new THREE.Vector3(
+            Math.cos(angle) * radialDistortion + Math.cos(angle + Math.PI / 2) * angularDistortion,
+            0,
+            Math.sin(angle) * radialDistortion + Math.sin(angle + Math.PI / 2) * angularDistortion
+        )
+    }
+    
     createPortalParticles() {
         const particleCount = 300
         const geometry = new THREE.BufferGeometry()
@@ -227,18 +383,31 @@ export default class Portal {
         const color1 = new THREE.Color(0x00ffff)
         const color2 = new THREE.Color(0x0080ff)
         const color3 = new THREE.Color(0x8000ff)
+        
+        // 📊 PASO 5: Inicializar datos de vórtice para cada partícula
+        this.particleVortexData = []
 
         for (let i = 0; i < particleCount; i++) {
             const i3 = i * 3
             
-            // Partículas que salen del portal en todas las direcciones
-            const radius = Math.random() * 0.8
-            const theta = Math.random() * Math.PI * 2
-            const phi = Math.random() * Math.PI
+            // 📊 PASO 5: Inicializar partículas en espiral logarítmica
+            const spiralAngle = (i / particleCount) * Math.PI * 8 // Múltiples vueltas
+            const spiralRadius = this.logarithmicSpiral(spiralAngle, 0.3, 0.1)
+            const height = 2.5 + Math.sin(spiralAngle * 2) * 1.0
             
-            positions[i3] = Math.sin(phi) * Math.cos(theta) * radius
-            positions[i3 + 1] = Math.cos(phi) * radius + 2.5 // Empezar desde el centro del portal
-            positions[i3 + 2] = Math.sin(phi) * Math.sin(theta) * radius
+            // Posición inicial en espiral
+            positions[i3] = Math.cos(spiralAngle) * spiralRadius
+            positions[i3 + 1] = height
+            positions[i3 + 2] = Math.sin(spiralAngle) * spiralRadius
+            
+            // Guardar datos de vórtice para cada partícula
+            this.particleVortexData.push({
+                initialAngle: spiralAngle,
+                initialRadius: spiralRadius,
+                spiralType: Math.random() > 0.5 ? 'logarithmic' : 'archimedean', // Tipo de espiral
+                speed: 0.5 + Math.random() * 0.5, // Velocidad individual
+                phase: Math.random() * Math.PI * 2 // Fase aleatoria
+            })
             
             // Colores aleatorios entre los tres colores místicos
             const colorChoice = Math.random()
@@ -288,44 +457,105 @@ export default class Portal {
         
         this.time += delta
         
-        // Rotar el portal completo lentamente
-        this.group.rotation.y += delta * 0.2
+        // Portal estático - NO rotar el grupo ni el modelo
+        // this.group.rotation.y += delta * 0.2 // DESACTIVADO
         
-        // Rotar anillos
-        if (this.outerRing) {
-            this.outerRing.rotation.z += delta * 0.3
-        }
-        if (this.innerRing) {
-            this.innerRing.rotation.z -= delta * 0.2
-        }
-        if (this.verticalGlow) {
-            this.verticalGlow.rotation.y += delta * 0.5
-            this.verticalGlow.rotation.x = Math.sin(this.time) * 0.1
-        }
+        // Portal estático - NO rotar el modelo GLB
+        // if (this.portalMesh) {
+        //     this.portalMesh.rotation.y += delta * 0.15 // DESACTIVADO
+        // }
         
-        // Rotar partículas orbitantes
-        if (this.orbitingParticles) {
-            this.orbitingParticles.rotation.y += delta * 0.4
-            const positions = this.orbitingParticles.geometry.attributes.position.array
-            const particleCount = positions.length / 3
-            for (let i = 0; i < particleCount; i++) {
-                const i3 = i * 3
-                // Hacer que las partículas suban y bajen
-                positions[i3 + 1] = 2 + Math.sin(this.time * 2 + i) * 1.5
+        // 📊 PASO 5: Animar el círculo vertical del portal con distorsión matemática
+        if (this.portalCircle) {
+            // Pulso de opacidad
+            this.portalCircle.material.opacity = 0.5 + Math.sin(this.time * 2) * 0.2
+            
+            // Efecto de vórtice (rotación del material, no del objeto)
+            this.portalCircle.material.emissiveIntensity = 0.6 + Math.sin(this.time * 3) * 0.3
+            
+            // 📊 PASO 5: Aplicar distorsión al plano del portal usando funciones matemáticas
+            // Optimización: Solo actualizar cada 2 frames para mejor rendimiento
+            if (this.portalCircle.geometry && Math.floor(this.time * 30) % 2 === 0) {
+                const vertices = this.portalCircle.geometry.attributes.position
+                if (vertices && vertices.count > 0) {
+                    const positions = vertices.array
+                    const originalPositions = this.portalCircle.geometry.userData.originalPositions
+                    
+                    // Guardar posiciones originales si no existen
+                    if (!originalPositions) {
+                        this.portalCircle.geometry.userData.originalPositions = new Float32Array(positions)
+                    } else {
+                        // Aplicar distorsión basada en funciones seno/coseno
+                        // Optimización: Procesar solo cada 3er vértice para mejor rendimiento
+                        for (let i = 0; i < positions.length; i += 9) { // Cada 3er vértice (3 coordenadas * 3)
+                            const x = originalPositions[i]
+                            const z = originalPositions[i + 2]
+                            
+                            // Calcular distorsión
+                            const distortion = this.distortionFunction(x, z, this.time, 2.0, 0.15)
+                            
+                            // Aplicar distorsión (solo en X y Z, mantener Y)
+                            positions[i] = originalPositions[i] + distortion.x
+                            positions[i + 2] = originalPositions[i + 2] + distortion.z
+                            
+                            // Aplicar distorsión suave a vértices adyacentes
+                            if (i + 3 < positions.length) {
+                                positions[i + 3] = originalPositions[i + 3] + distortion.x * 0.7
+                                positions[i + 5] = originalPositions[i + 5] + distortion.z * 0.7
+                            }
+                            if (i + 6 < positions.length) {
+                                positions[i + 6] = originalPositions[i + 6] + distortion.x * 0.5
+                                positions[i + 8] = originalPositions[i + 8] + distortion.z * 0.5
+                            }
+                        }
+                        vertices.needsUpdate = true
+                    }
+                }
             }
-            this.orbitingParticles.geometry.attributes.position.needsUpdate = true
         }
         
-        // Hacer que el brillo del suelo pulse
+        if (this.portalEdge) {
+            // Borde brillante que pulsa
+            this.portalEdge.material.opacity = 0.7 + Math.sin(this.time * 2.5) * 0.3
+        }
+        
+        // Rotar anillos (solo si se usa la estructura básica) - DESACTIVADO para mantener portal estático
+        // if (this.outerRing) {
+        //     this.outerRing.rotation.z += delta * 0.3
+        // }
+        // if (this.innerRing) {
+        //     this.innerRing.rotation.z -= delta * 0.2
+        // }
+        // if (this.verticalGlow) {
+        //     this.verticalGlow.rotation.y += delta * 0.5
+        //     this.verticalGlow.rotation.x = Math.sin(this.time) * 0.1
+        // }
+        
+        // Rotar partículas orbitantes - DESACTIVADO para mantener portal estático
+        // if (this.orbitingParticles) {
+        //     this.orbitingParticles.rotation.y += delta * 0.4
+        //     const positions = this.orbitingParticles.geometry.attributes.position.array
+        //     const particleCount = positions.length / 3
+        //     for (let i = 0; i < particleCount; i++) {
+        //         const i3 = i * 3
+        //         // Hacer que las partículas suban y bajen
+        //         positions[i3 + 1] = 2 + Math.sin(this.time * 2 + i) * 1.5
+        //     }
+        //     this.orbitingParticles.geometry.attributes.position.needsUpdate = true
+        // }
+        
+        // Hacer que el brillo del suelo pulse (sutil)
         if (this.floorGlow) {
-            this.floorGlow.material.opacity = 0.5 + Math.sin(this.time * 2) * 0.3
-            this.floorGlow.rotation.z += delta * 0.1
+            this.floorGlow.material.opacity = 0.5 + Math.sin(this.time * 2) * 0.2
+            // NO rotar - mantener estático
+            // this.floorGlow.rotation.z += delta * 0.1
         }
         
-        // Hacer que el plano del portal pulse y rote
+        // Hacer que el plano del portal pulse (solo pulso, sin rotación)
         if (this.portalPlane) {
             this.portalPlane.material.opacity = 0.7 + Math.sin(this.time * 3) * 0.2
-            this.portalPlane.rotation.z += delta * 0.3
+            // NO rotar - mantener estático
+            // this.portalPlane.rotation.z += delta * 0.3
         }
         
         // Hacer que las luces pulsen
@@ -339,35 +569,57 @@ export default class Portal {
             this.topLight.intensity = 2 + Math.sin(this.time * 1.5) * 1
         }
         
-        // Animar partículas que salen del portal
-        if (this.particles) {
+        // 📊 PASO 5: Animar partículas con efectos de vórtice matemáticos
+        if (this.particles && this.particleVortexData.length > 0) {
             const positions = this.particles.geometry.attributes.position.array
             const particleCount = positions.length / 3
             
             for (let i = 0; i < particleCount; i++) {
                 const i3 = i * 3
+                const vortexData = this.particleVortexData[i]
                 
-                // Mover partículas hacia afuera desde el centro del portal
-                const currentPos = new THREE.Vector3(positions[i3], positions[i3 + 1], positions[i3 + 2])
-                const distance = currentPos.length()
+                // Calcular nuevo ángulo con rotación acelerada hacia el centro
+                const currentAngle = Math.atan2(positions[i3 + 2], positions[i3])
+                const distance = Math.sqrt(positions[i3] * positions[i3] + positions[i3 + 2] * positions[i3 + 2])
                 
-                // Si la partícula está muy lejos, resetearla al centro
-                if (distance > 12) {
-                    const radius = Math.random() * 0.8
-                    const theta = Math.random() * Math.PI * 2
-                    const phi = Math.random() * Math.PI
-                    
-                    positions[i3] = Math.sin(phi) * Math.cos(theta) * radius
-                    positions[i3 + 1] = Math.cos(phi) * radius + 2.5
-                    positions[i3 + 2] = Math.sin(phi) * Math.sin(theta) * radius
+                // Efecto de succión: aceleración hacia el centro basada en la distancia
+                const suctionForce = Math.max(0, 1 - distance / 8) * this.vortexStrength
+                const newAngle = currentAngle + (this.vortexSpeed * delta * vortexData.speed) + (suctionForce * delta * 0.5)
+                
+                // Calcular nuevo radio usando espiral (se reduce hacia el centro)
+                let newRadius
+                if (vortexData.spiralType === 'logarithmic') {
+                    // Espiral logarítmica: se reduce exponencialmente
+                    const spiralProgress = (this.time * vortexData.speed + vortexData.phase) % (Math.PI * 8)
+                    newRadius = this.logarithmicSpiral(spiralProgress, 0.3, 0.1) * (1 - suctionForce * 0.5)
                 } else {
-                    // Mover partícula hacia afuera
-                    const direction = currentPos.clone().normalize()
-                    const speed = 0.08 + Math.random() * 0.08
+                    // Espiral de Arquímedes: se reduce linealmente
+                    const spiralProgress = (this.time * vortexData.speed + vortexData.phase) % (Math.PI * 8)
+                    newRadius = this.archimedeanSpiral(spiralProgress, 0.1) * (1 - suctionForce * 0.5)
+                }
+                
+                // Aplicar efecto de succión: reducir radio gradualmente
+                const targetRadius = newRadius * (1 - suctionForce)
+                const currentRadius = distance
+                const radiusChange = (targetRadius - currentRadius) * delta * 2
+                
+                // Actualizar posición en espiral
+                positions[i3] = Math.cos(newAngle) * (currentRadius + radiusChange)
+                positions[i3 + 1] = 2.5 + Math.sin(this.time * 2 + vortexData.phase) * 1.0 + suctionForce * 0.5
+                positions[i3 + 2] = Math.sin(newAngle) * (currentRadius + radiusChange)
+                
+                // Si la partícula está muy cerca del centro, resetearla
+                const newDistance = Math.sqrt(positions[i3] * positions[i3] + positions[i3 + 2] * positions[i3 + 2])
+                if (newDistance < 0.1) {
+                    // Resetear a posición inicial en espiral
+                    const resetAngle = vortexData.initialAngle + this.time * 0.5
+                    const resetRadius = vortexData.spiralType === 'logarithmic' 
+                        ? this.logarithmicSpiral(resetAngle, 0.3, 0.1)
+                        : this.archimedeanSpiral(resetAngle, 0.1)
                     
-                    positions[i3] += direction.x * speed
-                    positions[i3 + 1] += direction.y * speed + 0.03 // Ligeramente hacia arriba
-                    positions[i3 + 2] += direction.z * speed
+                    positions[i3] = Math.cos(resetAngle) * resetRadius
+                    positions[i3 + 1] = 2.5 + Math.sin(resetAngle * 2) * 1.0
+                    positions[i3 + 2] = Math.sin(resetAngle) * resetRadius
                 }
             }
             

@@ -8,7 +8,7 @@ const Login = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [points, setPoints] = useState(0);
-  const { login } = useAuth();
+  const { login, backendAvailable } = useAuth();
   const pointsIntervalRef = useRef(null);
 
   // Generar sonido de beep usando Web Audio API
@@ -189,6 +189,26 @@ const Login = () => {
             )}
           </button>
         </form>
+
+        {/* Estado del backend */}
+        {backendAvailable !== undefined && (
+          <div style={{
+            marginTop: '16px',
+            padding: '8px 12px',
+            borderRadius: '6px',
+            fontSize: '12px',
+            textAlign: 'center',
+            backgroundColor: backendAvailable ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+            color: backendAvailable ? '#22c55e' : '#ef4444',
+            border: `1px solid ${backendAvailable ? '#22c55e' : '#ef4444'}`
+          }}>
+            {backendAvailable ? (
+              <>✅ Backend conectado - Autenticación requerida</>
+            ) : (
+              <>⚠️ Backend no disponible - Modo offline</>
+            )}
+          </div>
+        )}
 
         {/* Footer info */}
         <div className="card-footer">

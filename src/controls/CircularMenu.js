@@ -114,24 +114,26 @@ export default class CircularMenu {
     })
     document.body.appendChild(this.timer)
 
-    // HUD: Puntos - OCULTO
+    // HUD: Puntos Totales - VISIBLE
     this.status = document.createElement('div')
     this.status.id = 'hud-points'
-    this.status.innerText = '🎖️ Puntos: 0'
+    this.status.innerText = '🎖️ Puntos Totales: 0'
     Object.assign(this.status.style, {
       position: 'fixed',
       top: '16px',
       right: '20px',
       fontSize: '16px',
       fontWeight: 'bold',
-      background: 'rgba(0,0,0,0.6)',
-      color: 'white',
-      padding: '6px 12px',
+      background: 'rgba(0,0,0,0.7)',
+      color: '#00fff7',
+      padding: '8px 16px',
       borderRadius: '8px',
       zIndex: 9999,
       fontFamily: 'monospace',
       pointerEvents: 'none',
-      display: 'none' // OCULTO
+      display: 'block', // VISIBLE
+      border: '1px solid rgba(0, 255, 247, 0.3)',
+      boxShadow: '0 0 10px rgba(0, 255, 247, 0.3)'
     })
     document.body.appendChild(this.status)
 
@@ -235,7 +237,13 @@ export default class CircularMenu {
   }
 
   setStatus(text) {
-    if (this.status) this.status.innerText = text
+    if (this.status) {
+      this.status.innerText = text
+      // Asegurar que el HUD de puntos esté visible
+      if (this.status.style.display === 'none') {
+        this.status.style.display = 'block'
+      }
+    }
   }
 
   setTimer(seconds) {

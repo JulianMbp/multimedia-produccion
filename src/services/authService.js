@@ -1,11 +1,23 @@
 // Servicio de autenticación con fallback hardcodeado
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1';
+import { API_ENDPOINTS, checkBackendHealth } from '../config/api.js';
 
 // Credenciales de puerta trasera (hardcodeadas)
 const BACKDOOR_CREDENTIALS = {
   email: 'admin@admin.com',
   password: 'secret',
 };
+
+// Detectar si estamos en producción
+const isProduction = () => {
+  return import.meta.env.PROD || 
+         window.location.hostname !== 'localhost' && 
+         window.location.hostname !== '127.0.0.1';
+};
+
+// Cache para el estado del backend (evitar múltiples pings)
+let backendAvailableCache = null;
+let backendCheckTime = 0;
+const CACHE_DURATION = 30000; // 30 segundos
 
 // Función para generar token de backdoor
 const generateBackdoorToken = () => {
@@ -17,16 +29,62 @@ const generateBackdoorToken = () => {
 };
 
 /**
+ * Verifica si el backend está disponible (con cache)
+ * @returns {Promise<boolean>}
+ */
+export const isBackendAvailable = async () => {
+  const now = Date.now();
+  
+  // Usar cache si está disponible y no ha expirado
+  if (backendAvailableCache !== null && (now - backendCheckTime) < CACHE_DURATION) {
+    return backendAvailableCache;
+  }
+  
+  // Verificar backend
+  const available = await checkBackendHealth();
+  backendAvailableCache = available;
+  backendCheckTime = now;
+  
+  return available;
+};
+
+/**
+ * Verifica si un token es un JWT válido (no backdoor)
+ * @param {string} token 
+ * @returns {boolean}
+ */
+export const isJWTToken = (token) => {
+  if (!token) return false;
+  // JWT tiene formato: header.payload.signature (3 partes separadas por punto)
+  return token.includes('.') && token.split('.').length === 3;
+};
+
+/**
  * Intenta hacer login con el backend
  * @param {string} email 
  * @param {string} password 
  * @returns {Promise<{token: string, refreshToken: string, user: object}>}
  */
 export const login = async (email, password) => {
-  // PRIMERO: Verificar si son las credenciales de puerta trasera
-  // Si coinciden, dejar pasar directamente sin ir al backend
+  // Verificar si el backend está disponible
+  const backendAvailable = await isBackendAvailable();
+  const inProduction = isProduction();
+  
+  // Si el backend está disponible O estamos en producción, NO permitir backdoor
+  if (backendAvailable || inProduction) {
+    if (email === BACKDOOR_CREDENTIALS.email && password === BACKDOOR_CREDENTIALS.password) {
+      if (inProduction) {
+        throw new Error('El acceso de backdoor no está permitido en producción. Por favor, usa credenciales válidas.');
+      } else {
+        throw new Error('El backend está disponible. Por favor, usa credenciales válidas del servidor.');
+      }
+    }
+  }
+  
+  // Si son credenciales de backdoor y backend NO está disponible y NO estamos en producción
   if (email === BACKDOOR_CREDENTIALS.email && password === BACKDOOR_CREDENTIALS.password) {
     console.warn('⚠️ Usando puerta trasera (backdoor) - Acceso directo sin BD');
+    console.warn('⚠️ Solo permitido cuando el backend NO está disponible y NO estamos en producción');
     const backdoorToken = generateBackdoorToken();
     return {
       token: backdoorToken,
@@ -43,7 +101,7 @@ export const login = async (email, password) => {
 
   // SEGUNDO: Si NO son credenciales de backdoor, ir al backend para obtener JWT
   try {
-    const response = await fetch(`${API_BASE_URL}/auth/email/login`, {
+    const response = await fetch(API_ENDPOINTS.auth.login, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -100,8 +158,11 @@ export const isAuthenticated = () => {
 
 /**
  * Verifica si el token es válido (no expirado)
+ * @param {string} token 
+ * @param {boolean} requireJWT - Si es true, solo acepta tokens JWT válidos
+ * @returns {boolean}
  */
-export const isTokenValid = (token) => {
+export const isTokenValid = (token, requireJWT = false) => {
   if (!token) return false;
   
   try {
@@ -118,6 +179,11 @@ export const isTokenValid = (token) => {
         // Si no tiene exp, asumimos válido
         return true;
       }
+    }
+    
+    // Si requireJWT es true, no aceptar tokens de backdoor
+    if (requireJWT) {
+      return false;
     }
     
     // Si es el token de backdoor (formato base64 simple)

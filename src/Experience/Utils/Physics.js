@@ -30,17 +30,17 @@ export default class Physics {
         this.obstacleMaterial = new CANNON.Material('obstacle')
         this.wallMaterial = new CANNON.Material('wall') // ⬅️ Nuevo material para muros
 
-        // Contacto: robot vs obstáculos
+        // Contacto: robot vs obstáculos (edificios sólidos)
         const robotObstacleContact = new CANNON.ContactMaterial(
             this.robotMaterial,
             this.obstacleMaterial,
             {
-                friction: 0.6,
-                restitution: 0.0, // ⬅️ elimina rebote
-                contactEquationStiffness: 1e9,
-                contactEquationRelaxation: 3,
-                frictionEquationStiffness: 1e7,
-                frictionEquationRelaxation: 3
+                friction: 0.8, // Mayor fricción para evitar deslizamiento
+                restitution: 0.0, // Sin rebote (completamente sólido)
+                contactEquationStiffness: 1e10, // Mayor rigidez para evitar penetración
+                contactEquationRelaxation: 4, // Mayor relajación para estabilidad
+                frictionEquationStiffness: 1e8, // Mayor rigidez de fricción
+                frictionEquationRelaxation: 4
             }
         )
 

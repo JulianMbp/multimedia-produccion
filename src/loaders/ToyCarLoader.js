@@ -3,6 +3,10 @@ import * as THREE from 'three'
 import { createBoxShapeFromModel, createTrimeshShapeFromModel } from '../Experience/Utils/PhysicsShapeFactory.js'
 import Prize from '../Experience/World/Prize.js'
 
+// Constantes para física de edificios
+const BUILDING_COLLISION_GROUP = 1 // Grupo de colisión para edificios (sólidos)
+const BUILDING_COLLISION_MASK = -1 // Colisiona con todo
+
 export default class ToyCarLoader {
     constructor(experience) {
         this.experience = experience
@@ -13,10 +17,28 @@ export default class ToyCarLoader {
         this.buildingPositions = [] // Almacenar posiciones de edificios para la vía
         this.level1Buildings = [] // Almacenar referencias a los modelos del nivel 1
         this.level1PhysicsBodies = [] // Almacenar referencias a los cuerpos físicos del nivel 1
+        this.coinsByLevel = { 1: [], 2: [], 3: [] } // Coins agrupados por nivel
+        this.coinsByRole = { default: [], finalPrize: [] } // Coins agrupados por role
     }
     
     getBuildingPositions() {
         return this.buildingPositions
+    }
+    
+    // Obtener cantidad de coins por nivel según Role
+    getCoinsCountByLevel(level, role = 'default') {
+        if (!this.coinsByLevel[level]) return 0
+        return this.coinsByLevel[level].filter(coin => coin.role === role).length
+    }
+    
+    // Obtener todos los coins de un nivel
+    getCoinsByLevel(level) {
+        return this.coinsByLevel[level] || []
+    }
+    
+    // Obtener coins por role
+    getCoinsByRole(role) {
+        return this.coinsByRole[role] || []
     }
     
     // Método para limpiar todos los edificios del nivel 1
@@ -124,6 +146,25 @@ export default class ToyCarLoader {
 
             console.log(`🔄 Procesando ${blocks.length} bloques...`)
 
+            // 📊 Analizar estructura del JSON: contar objetos por Role y Level
+            const statsByLevel = { 1: { default: 0, finalPrize: 0, building: 0, vehicle: 0 }, 
+                                   2: { default: 0, finalPrize: 0, building: 0, vehicle: 0 },
+                                   3: { default: 0, finalPrize: 0, building: 0, vehicle: 0 } }
+            
+            blocks.forEach(block => {
+                const level = block.level || 1 // Default a nivel 1 si no tiene level
+                const role = block.Role || (block.name?.startsWith('building') ? 'building' : 'default')
+                if (statsByLevel[level] && statsByLevel[level][role] !== undefined) {
+                    statsByLevel[level][role]++
+                }
+            })
+            
+            console.log('📊 Estadísticas del JSON por nivel:')
+            Object.keys(statsByLevel).forEach(level => {
+                const stats = statsByLevel[level]
+                console.log(`   Nivel ${level}:`, stats)
+            })
+
             // 📐 Calcular el centro de masa de todos los edificios para normalizar posiciones
             let sumX = 0, sumY = 0, sumZ = 0
             let validBlocks = 0
@@ -158,6 +199,30 @@ export default class ToyCarLoader {
             let missingModels = []
             let blocksWithoutName = []
             
+            // Contar carteles (Cubes) por nivel para asegurar 4 por nivel
+            const cubesByLevel = { 1: 0, 2: 0, 3: 0 }
+            blocks.forEach((block) => {
+                const cube = block.name && (block.name.includes('Cube') || block.name.includes('cube'))
+                if (cube) {
+                    const level = block.level || 1
+                    cubesByLevel[level] = (cubesByLevel[level] || 0) + 1
+                }
+            })
+            
+            console.log('📊 Carteles encontrados por nivel:', cubesByLevel)
+            
+            // Advertir si no hay 4 carteles por nivel
+            Object.keys(cubesByLevel).forEach(level => {
+                const count = cubesByLevel[level]
+                if (count < 4) {
+                    console.warn(`⚠️ Nivel ${level}: Solo hay ${count} carteles, se recomiendan 4`)
+                } else if (count > 4) {
+                    console.warn(`⚠️ Nivel ${level}: Hay ${count} carteles, se recomiendan 4`)
+                } else {
+                    console.log(`✅ Nivel ${level}: ${count} carteles (correcto)`)
+                }
+            })
+            
             blocks.forEach((block) => {
                 if (!block.name) {
                     blocksWithoutName.push(block)
@@ -182,43 +247,93 @@ export default class ToyCarLoader {
                 // 🎯 Manejo de Carteles
                 const cube = model.getObjectByName('Cube')
                 if (cube) {
+                    // Determinar qué textura usar según el nivel
+                    // Distribuir 4 texturas diferentes por nivel (12 texturas totales)
+                    const level = block.level || 1
+                    const textureIndex = (buildingCount % 4) + 1 // Ciclo entre 1-4
+                    const textureNumber = ((level - 1) * 4) + textureIndex // Nivel 1: 1-4, Nivel 2: 5-8, Nivel 3: 9-12
+                    
+                    // Si la textura no existe, usar ima1.jpg como fallback
+                    const texturePath = `/textures/ima${textureNumber}.jpg`
+                    const fallbackPath = '/textures/ima1.jpg'
+                    
                     // 1) Carga la textura
                     const textureLoader = new THREE.TextureLoader()
-                    const texture = textureLoader.load('/textures/ima1.jpg', () => {
-                        // 1) Ajustes de color y filtrado
-                        texture.encoding = THREE.sRGBEncoding
-                        texture.wrapS = THREE.ClampToEdgeWrapping
-                        texture.wrapT = THREE.ClampToEdgeWrapping
-                        texture.anisotropy = this.experience.renderer.instance.capabilities.getMaxAnisotropy()
+                    const loadTexture = (path) => {
+                        return textureLoader.load(
+                            path,
+                            (texture) => {
+                                // Ajustes de color y filtrado
+                                texture.encoding = THREE.sRGBEncoding
+                                texture.wrapS = THREE.ClampToEdgeWrapping
+                                texture.wrapT = THREE.ClampToEdgeWrapping
+                                texture.anisotropy = this.experience.renderer.instance.capabilities.getMaxAnisotropy()
 
-                        // 2) Centrar el pivote de rotación y girar 90°
-                        texture.center.set(0.5, 0.5)        // mueve el pivote al centro de la imagen
-                        texture.rotation = -Math.PI / 2     // gira -90°, cámbialo a +Math.PI/2 si lo necesitas
+                                // Centrar el pivote de rotación y girar 90°
+                                texture.center.set(0.5, 0.5)
+                                texture.rotation = -Math.PI / 2
 
-                        // 3) Crea un material y aplícalo
-                        cube.material = new THREE.MeshBasicMaterial({
-                            map: texture,
-                            side: THREE.DoubleSide
-                        })
-                        cube.material.needsUpdate = true
-                        
-                    })
-
+                                // Crea un material y aplícalo
+                                cube.material = new THREE.MeshBasicMaterial({
+                                    map: texture,
+                                    side: THREE.DoubleSide
+                                })
+                                cube.material.needsUpdate = true
+                            },
+                            undefined,
+                            (error) => {
+                                // Si falla, intentar con fallback
+                                if (path !== fallbackPath) {
+                                    console.warn(`⚠️ No se pudo cargar textura ${path}, usando fallback`)
+                                    loadTexture(fallbackPath)
+                                } else {
+                                    console.error(`❌ Error cargando textura: ${error}`)
+                                }
+                            }
+                        )
+                    }
+                    
+                    loadTexture(texturePath)
                 }
 
-                // Si es un premio (coin, reward, etc.)
-                if (block.name.startsWith('coin')) {
-                    console.log(`Premio detectado: ${block.name}`)
+                // 🪙 Detectar coins: por nombre O por Role
+                const isCoin = block.name.startsWith('coin') || block.Role === 'default' || block.Role === 'finalPrize'
+                
+                if (isCoin) {
+                    const blockLevel = block.level || 1
+                    const blockRole = block.Role || 'default'
+                    
+                    console.log(`🪙 Coin detectado: ${block.name} (Level: ${blockLevel}, Role: ${blockRole})`)
+                    
                     // Normalizar posición del premio también (solo si no está ya normalizada)
                     const normalizedX = isAlreadyNormalized ? block.x : block.x - offsetX
                     const normalizedY = isAlreadyNormalized ? block.y : block.y - offsetY
                     const normalizedZ = isAlreadyNormalized ? block.z : block.z - offsetZ
+                    
                     const prize = new Prize({
                         model,
                         position: new THREE.Vector3(normalizedX, normalizedY, normalizedZ),
                         scene: this.scene
                     })
+                    
+                    // Guardar información del coin
+                    prize.level = blockLevel
+                    prize.role = blockRole
+                    prize.blockName = block.name
+                    
                     this.prizes.push(prize)
+                    
+                    // Agrupar por nivel y role
+                    if (!this.coinsByLevel[blockLevel]) {
+                        this.coinsByLevel[blockLevel] = []
+                    }
+                    this.coinsByLevel[blockLevel].push(prize)
+                    
+                    if (!this.coinsByRole[blockRole]) {
+                        this.coinsByRole[blockRole] = []
+                    }
+                    this.coinsByRole[blockRole].push(prize)
+                    
                     this.scene.add(prize.model)
                     return
                 }
@@ -314,11 +429,24 @@ export default class ToyCarLoader {
                 }
 
                 const body = new CANNON.Body({
-                    mass: 0,
+                    mass: 0, // Masa 0 = estático (no se puede mover)
+                    type: CANNON.Body.KINEMATIC, // Tipo cinemático para objetos estáticos sólidos
                     shape: shape,
                     position: new CANNON.Vec3(physicsPosition.x, physicsPosition.y, physicsPosition.z),
                     material: this.physics.obstacleMaterial
                 })
+                
+                // Asegurar que el cuerpo sea completamente estático y sólido
+                body.fixedRotation = true // No rotar
+                body.updateMassProperties() // Actualizar propiedades de masa
+                
+                // Configurar como objeto sólido no penetrable
+                body.collisionFilterGroup = BUILDING_COLLISION_GROUP // Grupo de colisión para edificios
+                body.collisionFilterMask = BUILDING_COLLISION_MASK // Colisiona con todo
+                
+                // Asegurar que el cuerpo no se pueda mover ni penetrar
+                body.isTrigger = false // No es un trigger, es un objeto sólido
+                body.allowSleep = false // No permitir que se duerma (siempre activo)
 
                 this.physics.world.addBody(body)
                 
@@ -328,6 +456,15 @@ export default class ToyCarLoader {
 
             // Resumen de carga
             console.log(`✅ ${buildingCount} edificios cargados y posicionados en la escena`)
+            console.log(`🪙 ${this.prizes.length} coins cargados`)
+            
+            // Resumen de coins por nivel
+            Object.keys(this.coinsByLevel).forEach(level => {
+                const coins = this.coinsByLevel[level]
+                const defaultCoins = coins.filter(c => c.role === 'default').length
+                const finalPrizeCoins = coins.filter(c => c.role === 'finalPrize').length
+                console.log(`   Nivel ${level}: ${coins.length} coins (${defaultCoins} default, ${finalPrizeCoins} finalPrize)`)
+            })
             
             if (missingModels.length > 0) {
                 console.warn(`⚠️ ${missingModels.length} modelos no encontrados:`, missingModels.slice(0, 5))

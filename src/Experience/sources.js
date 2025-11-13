@@ -36,6 +36,11 @@ export default [
         type: 'gltfModel',
         path: '/models/cheese/cheese_wedge.glb'
     },
+    {
+        name: 'portalModel',
+        type: 'gltfModel',
+        path: '/models/portal/portal_chido.glb'
+    },
     // Modelos de enemigos
     {
         name: 'enemyFastRun',

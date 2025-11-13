@@ -95,36 +95,59 @@ export default class Enemy {
             return
         }
         
-        // Buscar animación de caminar/correr
+        // Buscar animaciones: walking/run e idle
         let walkingAnimation = null
+        let idleAnimation = null
+        
         for (let i = 0; i < fbxAnimations.length; i++) {
             const anim = fbxAnimations[i]
             const animName = anim.name ? anim.name.toLowerCase() : `animation_${i}`
             
-            if (animName.includes('walk') || animName.includes('walking') || 
-                animName.includes('run') || animName.includes('running') ||
-                animName.includes('move')) {
+            // Buscar animación de caminar/correr
+            if ((animName.includes('walk') || animName.includes('walking') || 
+                 animName.includes('run') || animName.includes('running') ||
+                 animName.includes('move')) && !walkingAnimation) {
                 walkingAnimation = anim
-                break
+            }
+            
+            // Buscar animación idle
+            if ((animName.includes('idle') || animName.includes('stand') || 
+                 animName.includes('rest')) && !idleAnimation) {
+                idleAnimation = anim
             }
         }
         
-        // Si no se encuentra, usar la primera animación disponible
+        // Si no encontramos animaciones específicas, usar las primeras disponibles
         if (!walkingAnimation && fbxAnimations.length > 0) {
             for (let i = 0; i < fbxAnimations.length; i++) {
                 if (fbxAnimations[i].tracks && fbxAnimations[i].tracks.length > 0) {
-                    walkingAnimation = fbxAnimations[i]
-                    break
+                    if (!walkingAnimation) {
+                        walkingAnimation = fbxAnimations[i]
+                    } else if (!idleAnimation) {
+                        idleAnimation = fbxAnimations[i]
+                    }
                 }
             }
         }
         
-        // Crear acción de animación
+        // Configurar animación de caminar
         if (walkingAnimation && walkingAnimation.tracks && walkingAnimation.tracks.length > 0) {
             this.animation.actions.walking = this.animation.mixer.clipAction(walkingAnimation)
             this.animation.actions.walking.setLoop(THREE.LoopRepeat)
             this.animation.actions.walking.setEffectiveWeight(1.0)
             this.animation.actions.walking.setEffectiveTimeScale(1.0)
+        }
+        
+        // Configurar animación idle (si existe)
+        if (idleAnimation && idleAnimation.tracks && idleAnimation.tracks.length > 0) {
+            this.animation.actions.idle = this.animation.mixer.clipAction(idleAnimation)
+            this.animation.actions.idle.setLoop(THREE.LoopRepeat)
+            this.animation.actions.idle.setEffectiveWeight(1.0)
+            this.animation.actions.idle.setEffectiveTimeScale(1.0)
+            // Iniciar con idle por defecto
+            this.animation.actions.idle.play()
+        } else if (this.animation.actions.walking) {
+            // Si no hay idle, usar walking como default
             this.animation.actions.walking.play()
         }
     }
@@ -179,9 +202,17 @@ export default class Enemy {
                     this.body.quaternion.setFromEuler(0, angle, 0)
                 }
                 
-                // Reproducir animación de caminar
+                // Cambiar a animación de caminar si está persiguiendo
                 if (this.animation.actions.walking) {
                     if (!this.animation.actions.walking.isRunning()) {
+                        // Detener idle si está corriendo
+                        if (this.animation.actions.idle && this.animation.actions.idle.isRunning()) {
+                            this.animation.actions.idle.fadeOut(0.2)
+                            this.animation.actions.idle.stop()
+                        }
+                        // Iniciar walking
+                        this.animation.actions.walking.reset()
+                        this.animation.actions.walking.fadeIn(0.2)
                         this.animation.actions.walking.play()
                     }
                 }
@@ -193,8 +224,18 @@ export default class Enemy {
                 // Detener animación si la velocidad es muy baja
                 const velocity = this.body.velocity
                 const currentSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z)
-                if (currentSpeed < 0.5 && this.animation.actions.walking && this.animation.actions.walking.isRunning()) {
-                    this.animation.actions.walking.stop()
+                if (currentSpeed < 0.5) {
+                    // Cambiar a idle si está quieto
+                    if (this.animation.actions.walking && this.animation.actions.walking.isRunning()) {
+                        this.animation.actions.walking.fadeOut(0.2)
+                        this.animation.actions.walking.stop()
+                    }
+                    // Iniciar idle si existe
+                    if (this.animation.actions.idle && !this.animation.actions.idle.isRunning()) {
+                        this.animation.actions.idle.reset()
+                        this.animation.actions.idle.fadeIn(0.2)
+                        this.animation.actions.idle.play()
+                    }
                 }
             }
         }
